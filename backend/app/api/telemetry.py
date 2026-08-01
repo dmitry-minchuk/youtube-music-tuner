@@ -8,6 +8,7 @@ re-aggregated from their raw events, so a replay cannot double count.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
@@ -18,7 +19,13 @@ from sqlalchemy.orm import Session
 
 from app.api import errors
 from app.persistence.database import get_session
-from app.persistence.models import FeatureSnapshot, PlaybackSession, TelemetryEvent, utcnow
+from app.persistence.models import (
+    FeatureSnapshot,
+    PlaybackSession,
+    TelemetryEvent,
+    Track,
+    utcnow,
+)
 from app.player.aggregation import (
     AGGREGATION_VERSION,
     SessionAccumulator,
@@ -26,10 +33,17 @@ from app.player.aggregation import (
     summarize,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1", tags=["telemetry"])
 
 MAX_EVENTS_PER_BATCH = 100
 SUPPORTED_SCHEMA_VERSION = 1
+
+# YouTube IFrame error codes. 101 and 150 both mean "the owner disallowed
+# embedded playback" — a permanent property of the track, not a hiccup, so
+# the track stops being queued instead of failing again every day.
+PERMANENT_EMBED_ERRORS = frozenset({101, 150})
 
 KNOWN_EVENT_TYPES = frozenset(
     {
@@ -140,6 +154,21 @@ def reaggregate_session(db: Session, session_id: str) -> PlaybackSession | None:
     return record
 
 
+def _mark_unplayable_if_permanent(db: Session, video_id: str, payload: dict[str, Any]) -> None:
+    """Take a track out of rotation when YouTube refuses to embed it."""
+    code = payload.get("errorCode")
+    if not isinstance(code, int) or code not in PERMANENT_EMBED_ERRORS:
+        return
+    track = db.get(Track, video_id)
+    if track is not None and track.is_playable:
+        track.is_playable = False
+        db.flush()
+        logger.info(
+            "track marked unplayable in embedded player",
+            extra={"operation": "telemetry", "video_id": video_id, "error_code": code},
+        )
+
+
 def _link_feature_snapshot(db: Session, record: PlaybackSession) -> None:
     """Bind the vector used at selection time to the session it produced.
 
@@ -208,6 +237,8 @@ def ingest_batch(payload: dict[str, Any], db: Session = Depends(get_session)) ->
 
         accepted += 1
         touched_sessions.add(event.sessionId)
+        if event.type == "player_error":
+            _mark_unplayable_if_permanent(db, event.videoId, event.payload)
 
     for session_id in touched_sessions:
         reaggregate_session(db, session_id)

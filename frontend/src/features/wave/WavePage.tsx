@@ -54,6 +54,7 @@ export function WavePage(): React.JSX.Element {
   const currentIndex = usePlayerStore((store) => store.index);
   const playerState = usePlayerStore((store) => store.state);
   const currentVideoId = usePlayerStore((store) => store.queue[store.index]?.videoId);
+  const unplayableSkipped = usePlayerStore((store) => store.unplayableSkipped);
 
   // Adopt the saved defaults once, without fighting later edits.
   const defaultsApplied = useRef(false);
@@ -188,6 +189,13 @@ export function WavePage(): React.JSX.Element {
         {patchWave.isError && (
           <p className={styles.error} role="status">
             Could not retune the queue — the current one is unchanged.
+          </p>
+        )}
+
+        {unplayableSkipped > 0 && (
+          <p className={styles.relaxation} role="status">
+            Skipped {unplayableSkipped} track{unplayableSkipped === 1 ? "" : "s"} that YouTube does
+            not allow to play in an embedded player. They will not be queued again.
           </p>
         )}
 

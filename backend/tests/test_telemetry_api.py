@@ -185,3 +185,32 @@ def test_telemetry_requires_a_session_token(client: TestClient) -> None:
         json={"schemaVersion": 1, "events": [event("s", 1, "play_started")]},
     )
     assert response.status_code == 403
+
+
+def test_permanent_embed_error_takes_the_track_out_of_rotation(
+    authed_client: TestClient, db_session
+) -> None:
+    """Error 150 means the owner disallowed embedding — it will never play."""
+    from app.persistence.models import Track
+
+    db_session.add(Track(video_id="vid-1", title="Blocked", is_playable=True))
+    db_session.commit()
+
+    session_id = str(uuid.uuid4())
+    post(authed_client, [event(session_id, 1, "player_error", errorCode=150)])
+
+    db_session.expire_all()
+    assert db_session.get(Track, "vid-1").is_playable is False
+
+
+def test_transient_error_leaves_the_track_playable(authed_client: TestClient, db_session) -> None:
+    """Code 2 is a bad parameter, not a permanent block."""
+    from app.persistence.models import Track
+
+    db_session.add(Track(video_id="vid-1", title="Fine", is_playable=True))
+    db_session.commit()
+
+    post(authed_client, [event(str(uuid.uuid4()), 1, "player_error", errorCode=2)])
+
+    db_session.expire_all()
+    assert db_session.get(Track, "vid-1").is_playable is True

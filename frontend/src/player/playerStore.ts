@@ -34,6 +34,7 @@ interface PlayerStoreState {
   volume: number;
   pauseOnHidden: boolean;
   pausedByPolicy: boolean;
+  unplayableSkipped: number;
   pendingEvents: number;
   lastPlayedAt: Record<string, number>;
 
@@ -174,6 +175,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     volume: 80,
     pauseOnHidden: true,
     pausedByPolicy: false,
+    unplayableSkipped: 0,
     pendingEvents: 0,
     lastPlayedAt: {},
 
@@ -191,6 +193,11 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
           // taste: advance without recording a skip.
           void (async () => {
             await emitAndFlush("player_error", { errorCode: event.errorCode });
+            // 101/150: the owner disallowed embedding. Surface it so a run of
+            // skips does not look like the player is broken.
+            if (event.errorCode === 101 || event.errorCode === 150) {
+              set({ unplayableSkipped: get().unplayableSkipped + 1 });
+            }
             await advance();
           })();
         }
@@ -212,6 +219,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
 
     setQueue(tracks, meta) {
       set({
+        unplayableSkipped: 0,
         queue: tracks,
         queueId: meta?.queueId ?? get().queueId,
         generationId: meta?.generationId ?? get().generationId,
