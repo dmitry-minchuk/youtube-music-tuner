@@ -1,0 +1,152 @@
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-5);
+}
+
+.label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mood select {
+  min-height: var(--hit-target);
+  min-width: 160px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--graphite-800);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.temperature {
+  min-width: 280px;
+  flex: 1 1 320px;
+}
+
+.temperatureLabels {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-1);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.mixValue {
+  color: var(--teal-400);
+  font-variant-numeric: tabular-nums;
+}
+
+.temperature input {
+  width: 100%;
+  accent-color: var(--teal-500);
+}
+
+.learning {
+  margin-top: var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.relaxation {
+  margin-top: var(--space-2);
+  color: var(--teal-400);
+  font-size: 0.85rem;
+}
+
+.error {
+  margin-top: var(--space-3);
+  color: var(--warning);
+  font-size: 0.88rem;
+}
+
+.queue {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queueRow {
+  display: grid;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  grid-template-columns: 32px minmax(0, 2fr) minmax(0, 1.4fr) 84px minmax(0, 1.4fr);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.queueRow:hover {
+  background: var(--graphite-800);
+}
+
+.currentItem .queueRow {
+  background: var(--coral-dim);
+}
+
+.position {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.queueTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queueArtist {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.familiar,
+.discovery {
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.familiar {
+  background: var(--coral-dim);
+  color: var(--coral-400);
+}
+
+.discovery {
+  background: var(--teal-dim);
+  color: var(--teal-400);
+}
+
+.reason {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1279px) {
+  .queueRow {
+    grid-template-columns: 28px minmax(0, 2fr) minmax(0, 1.2fr) 78px;
+  }
+
+  .reason {
+    display: none;
+  }
+}

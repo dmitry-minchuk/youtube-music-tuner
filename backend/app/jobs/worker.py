@@ -13,6 +13,7 @@ from app.integrations.youtube_music.errors import AuthError, IntegrationError, R
 from app.integrations.youtube_music.ledger import BudgetExceeded
 from app.integrations.youtube_music.port import MusicCatalogPort
 from app.jobs import queue
+from app.jobs.candidate_refresh import run_candidate_refresh
 from app.jobs.library_sync import SyncCooldownActive, run_library_sync
 from app.persistence import repositories as repo
 from app.persistence.models import Job, utcnow
@@ -73,11 +74,26 @@ def handle_rating_sync(session: Session, job: Job, catalog: MusicCatalogPort) ->
     return {"videoId": video_id, "revision": sent_revision, "confirmed": False, "superseded": True}
 
 
+def handle_candidate_refresh(
+    session: Session, job: Job, catalog: MusicCatalogPort
+) -> dict[str, object]:
+    seed = job.payload_json.get("randomSeed")
+    result = run_candidate_refresh(
+        session, catalog, random_seed=int(seed) if isinstance(seed, int) else None
+    )
+    return {
+        "seeds": list(result.seeds),
+        "edgesWritten": result.edges_written,
+        "callsMade": result.calls_made,
+    }
+
+
 Handler = Callable[[Session, Job, MusicCatalogPort], dict[str, object]]
 
 HANDLERS: dict[str, Handler] = {
     queue.JOB_LIBRARY_SYNC: handle_library_sync,
     queue.JOB_RATING_SYNC: handle_rating_sync,
+    queue.JOB_CANDIDATE_REFRESH: handle_candidate_refresh,
 }
 
 
