@@ -15,6 +15,7 @@ from app.integrations.youtube_music.port import MusicCatalogPort
 from app.jobs import queue
 from app.jobs.candidate_refresh import run_candidate_refresh
 from app.jobs.library_sync import SyncCooldownActive, run_library_sync
+from app.jobs.maintenance import create_backup, run_retention_cleanup
 from app.jobs.model_train import run_model_training
 from app.persistence import repositories as repo
 from app.persistence.models import Job, utcnow
@@ -102,6 +103,37 @@ def handle_model_train(session: Session, job: Job, _catalog: MusicCatalogPort) -
     }
 
 
+def handle_retention_cleanup(
+    session: Session, _job: Job, _catalog: MusicCatalogPort
+) -> dict[str, object]:
+    """Local only: back up first, then delete what has expired."""
+    from app.settings import get_settings
+
+    result = run_retention_cleanup(session, get_settings())
+    return {
+        "rawEvents": result.raw_events,
+        "featureSnapshots": result.feature_snapshots,
+        "ledgerRows": result.ledger_rows,
+        "failedJobs": result.failed_jobs,
+        "candidateEdges": result.candidate_edges,
+        "backupsRemoved": result.backups_removed,
+    }
+
+
+def handle_database_backup(
+    _session: Session, _job: Job, _catalog: MusicCatalogPort
+) -> dict[str, object]:
+    from app.settings import get_settings
+
+    result = create_backup(get_settings())
+    return {
+        "path": str(result.path),
+        "sha256": result.sha256,
+        "sizeBytes": result.size_bytes,
+        "integrityOk": result.integrity_ok,
+    }
+
+
 Handler = Callable[[Session, Job, MusicCatalogPort], dict[str, object]]
 
 HANDLERS: dict[str, Handler] = {
@@ -109,6 +141,8 @@ HANDLERS: dict[str, Handler] = {
     queue.JOB_RATING_SYNC: handle_rating_sync,
     queue.JOB_CANDIDATE_REFRESH: handle_candidate_refresh,
     queue.JOB_MODEL_TRAIN: handle_model_train,
+    queue.JOB_RETENTION_CLEANUP: handle_retention_cleanup,
+    queue.JOB_DATABASE_BACKUP: handle_database_backup,
 }
 
 

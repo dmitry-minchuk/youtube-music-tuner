@@ -195,10 +195,13 @@ class CallBudget:
         Auth and rate-limit failures count immediately; other transient
         failures need to fill the ladder first.
         """
+        # Order by insertion, not by started_at: started_at is derived by
+        # subtracting the duration, so a fast success recorded after a slow
+        # failure would otherwise sort before it and never close the circuit.
         recent = self._session.scalars(
             select(ApiCallLedger)
             .where(ApiCallLedger.started_at >= self._now - dt.timedelta(hours=1))
-            .order_by(ApiCallLedger.started_at.desc())
+            .order_by(ApiCallLedger.id.desc())
             .limit(10)
         ).all()
 

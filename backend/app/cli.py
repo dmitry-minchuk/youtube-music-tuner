@@ -77,11 +77,17 @@ def cmd_auth(_: argparse.Namespace, settings: Settings) -> int:
 
     settings.oauth_file.chmod(SECRET_FILE_MODE)
 
-    # Confirm the account without printing any token material.
+    # Confirm the account without printing any token material. The check is
+    # recorded in the ledger on purpose: a successful call closes a circuit
+    # that was opened by the pre-connection auth failures.
     from app.integrations.youtube_music.adapter import YouTubeMusicAdapter
+    from app.integrations.youtube_music.ledger import SqlCallRecorder
+    from app.persistence.database import session_scope
 
-    adapter = YouTubeMusicAdapter(settings)
-    account = adapter.account()
+    with session_scope() as session:
+        adapter = YouTubeMusicAdapter(settings, recorder=SqlCallRecorder(session))
+        account = adapter.account()
+
     _print({"status": "ok", "account": account.name, "handle": account.channel_handle})
     return 0
 

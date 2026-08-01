@@ -15,6 +15,7 @@ import socket
 from app.integrations.youtube_music.adapter import YouTubeMusicAdapter
 from app.integrations.youtube_music.ledger import CallBudget, SqlCallRecorder
 from app.jobs import queue, worker
+from app.jobs.periodic import enqueue_due_jobs
 from app.persistence.database import session_scope
 from app.settings import Settings
 
@@ -31,6 +32,7 @@ def run_once(settings: Settings, catalog_factory=None) -> bool:
     """Claim and run at most one due job. Returns True if a job ran."""
     with session_scope() as session:
         queue.release_expired_leases(session)
+        enqueue_due_jobs(session)
         job = queue.claim_due(session, worker_id())
         if job is None:
             return False

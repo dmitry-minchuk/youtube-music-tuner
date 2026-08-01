@@ -4,7 +4,17 @@
 
 ## Статус
 
-Сейчас завершён этап проектирования, документация приведена к revision 1.2.1: подготовлены продуктовые требования, архитектура, контракты, модель данных, правила телеметрии, алгоритм рекомендаций, Docker-схема и критерии приёмки. Код приложения ещё не реализован.
+Документация приведена к revision 1.2.1, реализованы фазы 0–6 из [roadmap](docs/12-roadmap.md): backend, frontend, интеграция с YouTube Music, плеер с телеметрией, рекомендатель, online-обучение, безопасная публикация и обслуживание. Приложение запускается одной командой; реальный end-to-end прогон на живом аккаунте (`REAL_YTM_TESTS=1`) ещё не выполнялся.
+
+Что уже работает:
+
+- health/readiness, миграции, JSON-логи с редакцией секретов;
+- OAuth device flow через CLI, синхронизация лайков/плейлистов/истории;
+- собственный плеер поверх YouTube IFrame с честным подсчётом прослушанного;
+- «Волна» с температурой, mood и объяснениями выбора;
+- LinUCB в shadow-режиме с активацией после чистого baseline;
+- создание и публикация трёх приватных плейлистов Tuner с backup и verify;
+- ежедневный backup, retention и бюджеты внешних вызовов.
 
 ## Зафиксированные решения
 
@@ -33,21 +43,90 @@
 - [риски и приватность](docs/10-security-privacy-risks.md);
 - [план разработки](docs/12-roadmap.md).
 
-## Планируемый запуск
-
-После реализации MVP:
+## Запуск
 
 ```bash
 docker compose up --build -d
+curl --fail http://127.0.0.1:43127/health/ready
 ```
 
-Интерфейс будет доступен только на loopback-адресе:
+Интерфейс доступен только на loopback-адресе:
 
 ```text
 http://127.0.0.1:43127
 ```
 
-Порт можно будет изменить через `APP_PORT`, не меняя образ.
+Порт меняется через `APP_PORT` в `.env`, образ пересобирать не нужно.
+
+### Подключение к YouTube Music
+
+Браузер никогда не получает client secret — подключение выполняется из терминала:
+
+```bash
+# 1. Импортировать client JSON из Google Cloud (TVs and Limited Input devices)
+docker compose exec -T tuner python -m app.cli credentials import - < client_secret.json
+
+# 2. Пройти device flow: открыть показанный URL и ввести код
+docker compose exec tuner python -m app.cli auth
+
+# 3. Проверить состояние
+docker compose exec tuner python -m app.cli status
+```
+
+Дальше в Settings нажать «Sync now», затем на экране Playlists сделать preview и создать три плейлиста Tuner.
+
+### Обслуживание
+
+```bash
+# Проверенный backup с манифестом и integrity check
+docker compose exec tuner python -m app.cli backup
+
+# Скопировать backup из named volume на хост (только так он становится внешним)
+docker compose cp tuner:/data/backups/<stamp> ./backups/<stamp>
+
+# Логи без follow
+docker compose logs --tail=200 tuner
+
+# Остановка без удаления данных
+docker compose down
+```
+
+`docker compose down -v` удалит volume вместе с БД, OAuth и backup-копиями — не использовать как обычную команду.
+
+## Разработка
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e "./backend[dev]"
+cd backend && ../.venv/bin/python -m pytest -q          # 215 тестов
+../.venv/bin/ruff check . && ../.venv/bin/mypy app
+
+cd frontend && npm install && npm run build && npx vitest run
+```
+
+Локальный запуск без Docker:
+
+```bash
+cd backend && TUNER_DATA_DIR=../data ../.venv/bin/alembic upgrade head
+TUNER_DATA_DIR=../data ../.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 43127
+cd frontend && npm run dev    # Vite на 43128 с проксированием /api
+```
+
+## Структура
+
+```text
+backend/app/
+  api/            HTTP-роуты, DTO, guard-middleware, маппинг ошибок
+  domain/         типы каталога, не зависящие от ytmusicapi
+  integrations/   адаптер ytmusicapi, ledger, бюджеты, circuit breaker
+  player/         агрегация сессий и формула reward
+  recommender/    признаки, rule-ranker, LinUCB, reranker, температура
+  publishing/     quality gates, diff planner, state machine публикации
+  jobs/           очередь с lease, scheduler, sync/train/maintenance
+  persistence/    модели SQLAlchemy и репозитории
+frontend/src/
+  player/         iframe-адаптер, трекер прослушивания, outbox телеметрии
+  features/       wave, library, playlists, insights, settings
+```
 
 ## Важное ограничение
 
