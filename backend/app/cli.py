@@ -18,6 +18,7 @@ from app.integrations.youtube_music.auth import (
     SECRET_FILE_MODE,
     ensure_secrets_dir,
     normalize_client_payload,
+    parse_browser_headers,
     read_oauth_status,
     write_secret_file,
 )
@@ -45,6 +46,60 @@ def cmd_credentials_import(args: argparse.Namespace, settings: Settings) -> int:
             "path": str(settings.client_secret_file),
             "mode": oct(SECRET_FILE_MODE),
             "next": "python -m app.cli auth",
+        }
+    )
+    return 0
+
+
+def cmd_browser_import(args: argparse.Namespace, settings: Settings) -> int:
+    """Import request headers copied from a logged-in music.youtube.com tab.
+
+    This is the authentication path that actually works: YouTube Music
+    answers HTTP 400 to Bearer tokens from self-made OAuth clients
+    (docs/03 section 2).
+    """
+    source = args.source
+    raw_text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+
+    try:
+        parse_browser_headers(raw_text)
+    except ValueError as exc:
+        _print({"status": "error", "message": str(exc)})
+        return 2
+
+    ensure_secrets_dir(settings)
+    from ytmusicapi import setup as ytmusic_setup
+
+    ytmusic_setup(filepath=str(settings.browser_auth_file), headers_raw=raw_text)
+    settings.browser_auth_file.chmod(SECRET_FILE_MODE)
+
+    # Prove the credentials work before reporting success.
+    from app.integrations.youtube_music.adapter import YouTubeMusicAdapter
+    from app.integrations.youtube_music.ledger import SqlCallRecorder
+    from app.persistence.database import session_scope
+
+    try:
+        with session_scope() as session:
+            adapter = YouTubeMusicAdapter(settings, recorder=SqlCallRecorder(session))
+            liked = adapter.liked_tracks(limit=1)
+    except Exception as exc:  # noqa: BLE001 - report, do not leak internals
+        _print(
+            {
+                "status": "error",
+                "message": "headers were stored but the first call failed",
+                "errorType": type(exc).__name__,
+                "hint": "copy the headers again from a POST to /youtubei/v1/ while logged in",
+            }
+        )
+        return 1
+
+    _print(
+        {
+            "status": "ok",
+            "path": str(settings.browser_auth_file),
+            "mode": oct(SECRET_FILE_MODE),
+            "method": "BROWSER",
+            "likedTracksVisible": len(liked),
         }
     )
     return 0
@@ -97,6 +152,7 @@ def cmd_status(_: argparse.Namespace, settings: Settings) -> int:
     _print(
         {
             "connected": status.connected,
+            "method": status.method,
             "clientConfigured": status.client_configured,
             "tokenPresent": status.token_present,
             "reason": status.reason,
@@ -156,6 +212,14 @@ def cmd_backup(_: argparse.Namespace, settings: Settings) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app.cli", description="YouTube Music Tuner operations")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    browser = sub.add_parser("browser", help="browser (cookie) authentication")
+    browser_sub = browser.add_subparsers(dest="browser_command", required=True)
+    browser_import = browser_sub.add_parser(
+        "import", help="import request headers copied from music.youtube.com ('-' for stdin)"
+    )
+    browser_import.add_argument("source", help="path to a headers file, or '-' for stdin")
+    browser_import.set_defaults(handler=cmd_browser_import)
 
     credentials = sub.add_parser("credentials", help="manage Google OAuth client credentials")
     credentials_sub = credentials.add_subparsers(dest="credentials_command", required=True)

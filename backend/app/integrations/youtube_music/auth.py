@@ -20,12 +20,16 @@ SECRET_DIR_MODE = 0o700
 REQUIRED_CLIENT_FIELDS = ("client_id", "client_secret")
 
 
+REQUIRED_BROWSER_HEADERS = ("cookie",)
+
+
 @dataclass(frozen=True, slots=True)
 class OAuthStatus:
     connected: bool
     client_configured: bool
     token_present: bool
     reason: str
+    method: str = "NONE"  # BROWSER | OAUTH | NONE
 
 
 def ensure_secrets_dir(settings: Settings) -> Path:
@@ -75,7 +79,56 @@ def has_insecure_mode(path: Path) -> bool:
     return bool(mode & 0o077)
 
 
+def parse_browser_headers(raw: str) -> dict[str, str]:
+    """Parse request headers copied from the browser's network tab.
+
+    Accepts the ``Name: value`` block that Chrome and Firefox produce under
+    "Copy request headers", and tolerates the ``name: value`` casing plus
+    blank lines. Only a Cookie header is strictly required.
+    """
+    headers: dict[str, str] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        name, _, value = line.partition(":")
+        name = name.strip().lower()
+        value = value.strip()
+        # Skip HTTP/2 pseudo-headers such as :authority.
+        if not name or name.startswith(":") or not value:
+            continue
+        headers[name] = value
+
+    missing = [field for field in REQUIRED_BROWSER_HEADERS if field not in headers]
+    if missing:
+        raise ValueError(
+            "pasted headers are missing: " + ", ".join(missing) + "; copy the request headers "
+            "of a POST to music.youtube.com/youtubei/v1/..."
+        )
+    return headers
+
+
+def browser_auth_present(settings: Settings) -> bool:
+    data = _readable_json(settings.browser_auth_file)
+    return bool(data and data.get("Cookie") or data and data.get("cookie"))
+
+
 def read_oauth_status(settings: Settings) -> OAuthStatus:
+    """Report how (and whether) the app can talk to YouTube Music.
+
+    Browser headers take precedence: YouTube Music rejects Bearer tokens
+    issued to self-made OAuth clients, so cookie auth is the working path
+    (docs/03 section 2).
+    """
+    if browser_auth_present(settings):
+        return OAuthStatus(
+            connected=True,
+            client_configured=True,
+            token_present=True,
+            reason="connected via browser headers",
+            method="BROWSER",
+        )
+
     client = _readable_json(settings.client_secret_file)
     token = _readable_json(settings.oauth_file)
     client_configured = client is not None and all(
@@ -84,15 +137,16 @@ def read_oauth_status(settings: Settings) -> OAuthStatus:
     token_present = token is not None and bool(token.get("refresh_token"))
 
     if not client_configured:
-        reason = "client credentials not imported"
+        reason = "no browser headers and no OAuth client imported"
     elif not token_present:
         reason = "device flow not completed"
     else:
-        reason = "connected"
+        reason = "connected via OAuth"
 
     return OAuthStatus(
         connected=client_configured and token_present,
         client_configured=client_configured,
         token_present=token_present,
         reason=reason,
+        method="OAUTH" if (client_configured and token_present) else "NONE",
     )

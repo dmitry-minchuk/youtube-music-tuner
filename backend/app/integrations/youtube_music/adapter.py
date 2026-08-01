@@ -101,10 +101,17 @@ class YouTubeMusicAdapter:
     def _build_client(self) -> Any:
         from ytmusicapi import OAuthCredentials, YTMusic
 
+        # Browser headers first: YouTube Music rejects Bearer tokens issued to
+        # self-made OAuth clients with HTTP 400, so cookie auth is the path
+        # that actually works (docs/03 section 2).
+        browser_path: Path = self._settings.browser_auth_file
+        if browser_path.is_file():
+            return YTMusic(str(browser_path))
+
         oauth_path: Path = self._settings.oauth_file
         client_path: Path = self._settings.client_secret_file
         if not oauth_path.is_file():
-            raise AuthError("OAuth token file is missing; run the device flow")
+            raise AuthError("not connected; import browser headers or run the device flow")
         if not client_path.is_file():
             raise AuthError("OAuth client file is missing; import client credentials")
 

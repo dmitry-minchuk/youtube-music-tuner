@@ -49,6 +49,11 @@ class Settings(BaseSettings):
         return self.secrets_dir / "client.json"
 
     @property
+    def browser_auth_file(self) -> Path:
+        """Browser request headers — the working auth path (docs/03 s.2)."""
+        return self.secrets_dir / "browser.json"
+
+    @property
     def allowed_hosts(self) -> frozenset[str]:
         """Host header allowlist, blocking DNS rebinding (docs/08 section 1)."""
         names = ("127.0.0.1", "localhost", "[::1]")

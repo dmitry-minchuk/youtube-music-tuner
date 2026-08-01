@@ -8,18 +8,27 @@
 
 ## 2. Аутентификация
 
-Основной вариант — OAuth device flow с собственным Google Cloud client:
+### Проверенный факт: собственный OAuth client не работает
 
-1. Создать отдельный Google Cloud project.
-2. Включить YouTube Data API.
-3. Создать OAuth Client ID типа `TVs and Limited Input devices`.
-4. Импортировать client JSON через `python -m app.cli credentials import -`; CLI валидирует его и сохраняет в named volume как `/data/secrets/client.json` с правами `0600`.
-5. Запустить одноразовую CLI-команду внутри контейнера: `python -m app.cli auth`.
-6. Открыть показанный Google URL, ввести device code и подтвердить доступ.
-7. Сохранить refreshable token в `/data/secrets/oauth.json` с правами `0600`.
-8. Проверить `get_account_info()` и показать подключённый аккаунт в Settings.
+Проверка 2026-08-01 на реальном аккаунте: device flow с собственным Google Cloud client типа `TVs and Limited Input devices` проходит успешно, Google возвращает валидный refresh token со scope `https://www.googleapis.com/auth/youtube`, но **любой** последующий вызов internal-API YouTube Music отвечает `HTTP 400 Bad Request: Request contains an invalid argument` — включая `get_account_info`, `get_liked_songs`, `get_library_playlists`, `get_history` и `search`. Неавторизованный `search` через тот же контейнер при этом работает, то есть транспорт и парсеры исправны.
 
-Web UI не принимает и не отображает client secret. Browser/cookie authentication остаётся аварийным fallback и не входит в основной сценарий, поскольку она более хрупкая и требует работы с cookie.
+Вывод: YouTube Music принимает Bearer-токены только от собственных клиентов Google, а не от клиента, созданного пользователем. Токен формально валиден, но для internal API бесполезен.
+
+### Основной вариант — browser authentication
+
+1. Открыть `https://music.youtube.com` в браузере под нужным аккаунтом.
+2. В DevTools → Network найти любой POST на `/youtubei/v1/...`.
+3. Скопировать request headers (Chrome: правый клик → Copy → Copy request headers).
+4. Импортировать: `python -m app.cli browser import -`, CLI валидирует наличие `cookie`, сохраняет `/data/secrets/browser.json` с правами `0600` и сразу выполняет пробный `get_liked_songs(limit=1)` — успех подтверждается только после реального ответа.
+5. Проверить `python -m app.cli status`: `method=BROWSER`.
+
+Cookies живут долго, но не вечно: при `AuthError` UI показывает reconnect, и headers копируются заново. Это цена работы поверх неофициального интерфейса.
+
+### Резервный вариант — OAuth device flow
+
+Оставлен в коде на случай, если Google снова начнёт принимать пользовательские клиенты: `credentials import` → `auth` → `/data/secrets/oauth.json`. Адаптер использует OAuth только если `browser.json` отсутствует.
+
+Web UI не принимает и не отображает ни client secret, ни cookies: и то и другое импортируется исключительно через CLI.
 
 ## 3. Adapter boundary
 

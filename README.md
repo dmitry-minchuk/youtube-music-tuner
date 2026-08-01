@@ -60,18 +60,18 @@ http://127.0.0.1:43127
 
 ### Подключение к YouTube Music
 
-Браузер никогда не получает client secret — подключение выполняется из терминала:
+Собственный Google Cloud OAuth client проверен и **не работает**: device flow проходит, но YouTube Music отвечает `HTTP 400` на любой запрос с таким токеном. Рабочий способ — browser authentication.
+
+1. Открыть `https://music.youtube.com` под нужным аккаунтом.
+2. DevTools → Network → любой POST на `/youtubei/v1/...` → Copy request headers.
+3. Импортировать заголовки:
 
 ```bash
-# 1. Импортировать client JSON из Google Cloud (TVs and Limited Input devices)
-docker compose exec -T tuner python -m app.cli credentials import - < client_secret.json
-
-# 2. Пройти device flow: открыть показанный URL и ввести код
-docker compose exec tuner python -m app.cli auth
-
-# 3. Проверить состояние
-docker compose exec tuner python -m app.cli status
+pbpaste | docker compose exec -T tuner python -m app.cli browser import -
+docker compose exec tuner python -m app.cli status   # ожидается method=BROWSER
 ```
+
+Команда сама делает пробный запрос и сообщает об успехе только после реального ответа YouTube Music. Подробности и резервный OAuth-путь: [docs/03](docs/03-youtube-integration.md).
 
 Дальше в Settings нажать «Sync now», затем на экране Playlists сделать preview и создать три плейлиста Tuner.
 
