@@ -253,3 +253,57 @@ def test_items_carry_deterministic_reason_codes(db_session) -> None:
 def test_empty_pool_returns_no_items_instead_of_failing(db_session) -> None:
     result = generate_wave(db_session, WaveRequest(length=20))
     assert result.items == ()
+
+
+def test_queue_opens_with_tracks_that_already_played(db_session) -> None:
+    """Embeddability is only knowable by trying, so lead with proven tracks.
+
+    The proven set only helps once history is longer than the 30-play recency
+    exclusion — before that every proven track is also a recent one and is
+    filtered out anyway.
+    """
+    build_pool(db_session, liked_count=10, discovery_count=40)
+
+    # Two old successful plays, then enough newer plays to push them out of
+    # the recency window so they become eligible again.
+    for index, video_id in enumerate(("liked-7", "liked-8")):
+        db_session.add(
+            PlaybackSession(
+                session_id=f"proven-{index}",
+                video_id=video_id,
+                started_at=utcnow() - dt.timedelta(days=30),
+                played_seconds=120.0,
+            )
+        )
+    for index in range(35):
+        db_session.add(
+            PlaybackSession(
+                session_id=f"filler-{index}",
+                video_id=f"filler-{index}",
+                started_at=utcnow() - dt.timedelta(hours=index),
+                played_seconds=60.0,
+            )
+        )
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=20, length=12, random_seed=42))
+    head = [item.video_id for item in result.items[:2]]
+    assert set(head) <= {"liked-7", "liked-8"}, head
+
+
+def test_unproven_tracks_still_make_the_queue(db_session) -> None:
+    """The head preference must not turn into a permanent exclusion."""
+    build_pool(db_session, liked_count=6, discovery_count=20)
+    db_session.add(
+        PlaybackSession(
+            session_id="proven",
+            video_id="liked-0",
+            started_at=utcnow(),
+            played_seconds=90.0,
+        )
+    )
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(length=20, random_seed=8))
+    assert len(result.items) > 5
+    assert any(item.video_id != "liked-0" for item in result.items)

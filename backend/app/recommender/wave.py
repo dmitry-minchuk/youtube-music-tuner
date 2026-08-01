@@ -121,6 +121,14 @@ def _liked(db: Session) -> set[str]:
     return set(rows)
 
 
+def _proven_playable(db: Session) -> set[str]:
+    """Tracks the embedded player has actually played through before."""
+    rows = db.scalars(
+        select(PlaybackSession.video_id).where(PlaybackSession.played_seconds >= 5.0)
+    ).all()
+    return set(rows)
+
+
 def _strong_positive(db: Session) -> set[str]:
     """Tracks with a stored strong positive local signal (docs/05 s.12)."""
     rows = db.scalars(
@@ -239,6 +247,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     blocked = _blocked(db)
     liked = _liked(db)
     strong_positive = _strong_positive(db)
+    proven = _proven_playable(db)
     recent = _recently_played(db)
     error_cooldown = _error_cooldown(db, now)
     edges = _candidate_edges(db, now)
@@ -348,6 +357,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
                 source_type=source_type,
                 familiar=familiar,
                 quality_expected=quality,
+                proven_playable=video_id in proven,
                 reason_codes=reasons,
             )
         )

@@ -17,6 +17,12 @@ MAX_CONSECUTIVE_SAME_SOURCE = 3
 MIN_DISTINCT_SEEDS_RATIO = 0.25
 DISTINCT_SEED_PREFIX = 20
 
+# Whether a track can be embedded is only knowable by trying it, so open
+# the queue with tracks that already played. Unproven ones still appear, just
+# not in the first few slots where a silent skip looks like a broken player.
+PROVEN_HEAD_BONUS = 0.6
+PROVEN_HEAD_POSITIONS = 4
+
 SAME_ARTIST_PENALTY = 0.35
 SAME_ALBUM_PENALTY = 0.15
 RECENT_TRACK_PENALTY = 0.25
@@ -34,6 +40,7 @@ class RerankCandidate:
     source_type: str
     familiar: bool
     quality_expected: float
+    proven_playable: bool = False
     reason_codes: tuple[str, ...] = ()
 
 
@@ -122,6 +129,9 @@ def _adjusted_score(
         score -= SOURCE_CONCENTRATION_PENALTY * same_source / max(1, len(recent))
     if familiar_needed == candidate.familiar:
         score += QUOTA_BONUS
+    if not candidate.proven_playable and len(chosen) < PROVEN_HEAD_POSITIONS:
+        # Fades out after the opening positions so discovery is not punished.
+        score -= PROVEN_HEAD_BONUS * (1 - len(chosen) / PROVEN_HEAD_POSITIONS)
     return score
 
 
