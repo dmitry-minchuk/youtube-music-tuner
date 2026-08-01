@@ -115,7 +115,7 @@ export function SettingsPage(): React.JSX.Element {
           <label className={styles.toggleRow}>
             <input
               type="checkbox"
-              checked={settings.data?.pauseOnHidden ?? true}
+              checked={settings.data?.pauseOnHidden ?? false}
               onChange={(event) =>
                 updateSettings.mutate({ pauseOnHidden: event.target.checked })
               }
@@ -123,10 +123,10 @@ export function SettingsPage(): React.JSX.Element {
             <span>
               <span className={styles.toggleTitle}>Pause when this tab is hidden</span>
               <span className={styles.toggleHint}>
-                YouTube's Developer Policies treat a player outside the page you are viewing as a
-                background player, so this is on by default. Browsers also report "hidden" when the
-                window is simply covered by another application, which is stricter than the policy
-                requires — switch it off if that gets in your way.
+                Off by default, so switching apps never interrupts the music. Turn it on for the
+                stricter reading of YouTube's Developer Policies, which treat a player outside the
+                page you are viewing as a background player — note that browsers also report
+                "hidden" when the window is merely covered by another window.
               </span>
             </span>
           </label>

@@ -7,23 +7,23 @@ from fastapi.testclient import TestClient
 
 def test_defaults_are_returned_before_anything_is_saved(client: TestClient) -> None:
     body = client.get("/api/v1/settings").json()
-    # Policy-safe default: pausing when hidden stays on until turned off.
-    assert body["pauseOnHidden"] is True
+    # Nothing interrupts playback unless the owner asks for it.
+    assert body["pauseOnHidden"] is False
     assert body["defaultTemperature"] == 50
     assert body["defaultMood"] == "ANY"
 
 
-def test_a_setting_can_be_turned_off_and_persists(authed_client: TestClient) -> None:
-    updated = authed_client.patch("/api/v1/settings", json={"pauseOnHidden": False}).json()
-    assert updated["pauseOnHidden"] is False
-    assert authed_client.get("/api/v1/settings").json()["pauseOnHidden"] is False
+def test_a_setting_can_be_turned_on_and_persists(authed_client: TestClient) -> None:
+    updated = authed_client.patch("/api/v1/settings", json={"pauseOnHidden": True}).json()
+    assert updated["pauseOnHidden"] is True
+    assert authed_client.get("/api/v1/settings").json()["pauseOnHidden"] is True
 
 
 def test_partial_patch_leaves_other_values_alone(authed_client: TestClient) -> None:
-    authed_client.patch("/api/v1/settings", json={"pauseOnHidden": False})
+    authed_client.patch("/api/v1/settings", json={"pauseOnHidden": True})
     authed_client.patch("/api/v1/settings", json={"defaultTemperature": 80})
     body = authed_client.get("/api/v1/settings").json()
-    assert body["pauseOnHidden"] is False
+    assert body["pauseOnHidden"] is True
     assert body["defaultTemperature"] == 80
 
 

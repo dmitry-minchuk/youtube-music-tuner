@@ -1,10 +1,11 @@
 """User-adjustable playback and automation settings (docs/07 section 7).
 
-Only non-secret values live here. ``pauseOnHidden`` defaults to true because
-YouTube's Developer Policies treat a player outside the viewed page as a
-background player; the switch exists because browsers also report "hidden"
-when the window is merely occluded by another application, which is stricter
-than the policy requires (docs/04 section 1).
+Only non-secret values live here. ``pauseOnHidden`` defaults to **false**:
+nothing may interrupt playback on this personal installation. Browsers report
+"hidden" whenever the window is occluded by another application, so a default
+of true stopped the music every time the owner switched apps. The switch
+remains for anyone who wants the stricter, policy-conservative behaviour
+(docs/04 section 1).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from app.persistence.models import AppSetting
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 DEFAULTS: dict[str, Any] = {
-    "pauseOnHidden": True,
+    "pauseOnHidden": False,
     "defaultTemperature": 50,
     "defaultMood": "ANY",
     "volume": 80,
@@ -31,9 +32,7 @@ DEFAULTS: dict[str, Any] = {
 class SettingsPatch(BaseModel):
     pauseOnHidden: bool | None = None
     defaultTemperature: int | None = Field(default=None, ge=0, le=100)
-    defaultMood: (
-        Literal["ANY", "FOCUS", "ENERGY", "CALM", "BACKGROUND", "REDISCOVER"] | None
-    ) = None
+    defaultMood: Literal["ANY", "FOCUS", "ENERGY", "CALM", "BACKGROUND", "REDISCOVER"] | None = None
     volume: int | None = Field(default=None, ge=0, le=100)
 
 

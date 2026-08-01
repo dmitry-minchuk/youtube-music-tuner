@@ -64,7 +64,7 @@ export function PlayerPanel(): React.JSX.Element {
       {error && <p className={styles.error}>{error}</p>}
       {pausedByPolicy && (
         <p className={styles.notice} role="status">
-          Playback paused because this tab is no longer visible. You can turn this off in
+          Paused because this tab is hidden — you have that option enabled in
           Settings → Playback.
         </p>
       )}

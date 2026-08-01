@@ -2,8 +2,8 @@
  * Player and queue state (docs/04 sections 1, 5 and 8).
  *
  * One playback session per videoId: it starts on the first PLAYING and is
- * closed atomically before the next track starts. Leaving the tab pauses
- * playback — a policy requirement, not an optimisation.
+ * closed atomically before the next track starts. Playback continues when the
+ * tab is hidden unless the owner opts into pausing (docs/04 section 1).
  */
 
 import { create } from "zustand";
@@ -185,7 +185,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     positionSeconds: 0,
     durationSeconds: null,
     volume: 80,
-    pauseOnHidden: true,
+    pauseOnHidden: false,
     pausedByPolicy: false,
     unplayableSkipped: 0,
     pendingEvents: 0,
