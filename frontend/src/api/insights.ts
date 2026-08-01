@@ -38,8 +38,19 @@ export interface InsightsSummary {
 export interface ApiBudget {
   librarySync: { used: number; limit: number };
   playlistRequests: { used: number; limit: number };
+  discoveryCalls: { used: number; limit: number };
   externalCallsLast24h: number;
   circuit: { open: boolean; reason: string | null; retryAfter: string | null };
+}
+
+export interface PoolHealth {
+  graphEdges: number;
+  graphCandidates: number;
+  playableCandidates: number;
+  candidatesByHop: Record<string, number>;
+  recentOverlapPercent: number[];
+  lastOverlapPercent: number | null;
+  lastPoolSize: number | null;
 }
 
 export function useLearningStatus() {
@@ -61,6 +72,13 @@ export function useApiBudget() {
   return useQuery({
     queryKey: ["insights", "budget"],
     queryFn: ({ signal }) => api.get<ApiBudget>("/api/v1/diagnostics/api-budget", signal),
+  });
+}
+
+export function usePoolHealth() {
+  return useQuery({
+    queryKey: ["insights", "pool"],
+    queryFn: ({ signal }) => api.get<PoolHealth>("/api/v1/insights/pool", signal),
   });
 }
 

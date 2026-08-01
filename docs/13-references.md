@@ -23,6 +23,22 @@
 - [YouTube API Services Developer Policies](https://developers.google.com/youtube/terms/developer-policies) — policy boundary, запрет undocumented API и background player вне просматриваемой страницы/вкладки/экрана.
 - [Required Minimum Functionality](https://developers.google.com/youtube/terms/required-minimum-functionality) — требования к embedded playback/client behavior.
 
+## Рекомендательные системы
+
+Изучено 2026-08-01 при переработке candidate generation (ADR-004).
+
+- [A Comprehensive Survey on Retrieval Methods in Recommender Systems](https://arxiv.org/pdf/2308.01204) — трёхступенчатая воронка candidate generation → ranking → re-ranking и роль retrieval-стадии.
+- [Result Diversification in Search and Recommendation: A Survey](https://arxiv.org/pdf/2212.14464) — MMR против DPP, миопичность жадного отбора.
+- [Determinantal Point Processes для разнообразия](https://medium.com/data-science-collective/diversity-in-recommendations-determinantal-point-processes-dpp-2427bf1b6324) — оконный DPP, размеры окна 6–12 в продуктовых лентах.
+- [Item2Vec](https://www.emergentmind.com/papers/1603.04259) — эмбеддинги из совместной встречаемости, без анализа аудио.
+- [Item-Graph2vec](https://arxiv.org/pdf/2310.14215) — граф ко-встречаемости как развитие Item2Vec.
+- [A Random Walk Model for Item Recommendation](https://arxiv.org/pdf/1310.7957) и [Boosting Item-based CF via Nearly Uncoupled Random Walks](https://arxiv.org/pdf/1909.03579) — обход графа похожести как генерация кандидатов.
+- [Spotify Sequential Skip Prediction Challenge](https://www.aicrowd.com/challenges/spotify-sequential-skip-prediction-challenge) и [RNN-подход](https://arxiv.org/pdf/1904.10273) — пропуск как первоклассный сигнал.
+- [Calibrated Recommendations with Contextual Bandits](https://research.atspotify.com/2025/9/calibrated-recommendations-with-contextual-bandits-on-spotify-homepage) — квота состава как калибровка, а не тай-брейкер.
+- [Contextual and Sequential User Embeddings (CoSeRNN)](https://research.atspotify.com/2021/04/contextual-and-sequential-user-embeddings-for-music-recommendation) — предсказание предпочтений на старте сессии.
+- [Efficient Exploration and Exploitation for Sequential Music Recommendation](https://dl.acm.org/doi/10.1145/3625827) — почему чисто случайное исследование сходится медленно.
+- [Интервью команды «Моей волны»](https://the-flow.ru/features/yandeks-moya-volna-intervyu) — три класса алгоритмов, подстройка на каждом треке, взвешивание сигналов по значимости.
+
 ## Docker
 
 - [Docker volumes](https://docs.docker.com/engine/storage/volumes/) — lifecycle named volumes, default copy/pre-population пустого volume и backup/restore guidance.

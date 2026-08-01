@@ -4,6 +4,7 @@ import {
   useApiBudget,
   useInsightsSummary,
   useLearningStatus,
+  usePoolHealth,
 } from "@/api/insights";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
 import styles from "@/features/insights/InsightsPage.module.css";
@@ -14,6 +15,7 @@ export function InsightsPage(): React.JSX.Element {
   const learning = useLearningStatus();
   const summary = useInsightsSummary(period);
   const budget = useApiBudget();
+  const pool = usePoolHealth();
 
   return (
     <>
@@ -114,6 +116,50 @@ export function InsightsPage(): React.JSX.Element {
         </Panel>
 
         <Panel
+          title="Discovery pool"
+          description="How much material the wave draws from, and how much of it repeats"
+        >
+          {pool.data && pool.data.graphCandidates === 0 && (
+            <EmptyState message="No candidates yet — the pool fills up as Tuner explores." />
+          )}
+          {pool.data && pool.data.graphCandidates > 0 && (
+            <>
+              <dl className={styles.definitions}>
+                <div>
+                  <dt>Playable candidates</dt>
+                  <dd>{pool.data.playableCandidates}</dd>
+                </div>
+                <div>
+                  <dt>Known tracks in graph</dt>
+                  <dd>{pool.data.graphCandidates}</dd>
+                </div>
+                <div>
+                  <dt>Repeat of previous wave</dt>
+                  <dd>
+                    {pool.data.lastOverlapPercent === null
+                      ? "—"
+                      : `${pool.data.lastOverlapPercent}%`}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Connections</dt>
+                  <dd>{pool.data.graphEdges}</dd>
+                </div>
+              </dl>
+              {Object.keys(pool.data.candidatesByHop).length > 0 && (
+                <p className={styles.note}>
+                  Distance from your favourites:{" "}
+                  {Object.entries(pool.data.candidatesByHop)
+                    .map(([hop, count]) => `${count} at ${hop} step${hop === "1" ? "" : "s"}`)
+                    .join(", ")}
+                  .
+                </p>
+              )}
+            </>
+          )}
+        </Panel>
+
+        <Panel
           title="Diagnostics"
           actions={
             <button
@@ -141,6 +187,12 @@ export function InsightsPage(): React.JSX.Element {
                 <dt>Playlist requests today</dt>
                 <dd>
                   {budget.data.playlistRequests.used} / {budget.data.playlistRequests.limit}
+                </dd>
+              </div>
+              <div>
+                <dt>Discovery calls today</dt>
+                <dd>
+                  {budget.data.discoveryCalls.used} / {budget.data.discoveryCalls.limit}
                 </dd>
               </div>
               <div>

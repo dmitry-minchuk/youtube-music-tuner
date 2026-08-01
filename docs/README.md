@@ -34,7 +34,8 @@ Cleanup неверифицированного setup artifact доведён д�
 
 - [ADR-001: использовать ytmusicapi](decisions/ADR-001-use-ytmusicapi.md);
 - [ADR-002: локальный рекомендатель без обязательной LLM](decisions/ADR-002-local-recommender-no-llm.md);
-- [ADR-003: один контейнер и порт 43127](decisions/ADR-003-single-container-port.md).
+- [ADR-003: один контейнер и порт 43127](decisions/ADR-003-single-container-port.md);
+- [ADR-004: граф кандидатов вместо кешированного пула](decisions/ADR-004-candidate-graph-over-cached-pool.md).
 
 ## Правила актуализации
 

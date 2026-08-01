@@ -163,8 +163,11 @@ Response:
 
 - `GET /api/v1/insights/summary?period=30d`;
 - `GET /api/v1/insights/learning-status`;
+- `GET /api/v1/insights/pool`;
 - `GET /api/v1/tracks/{videoId}/explanation?generationId=...`;
 - `GET /api/v1/diagnostics/api-budget`.
+
+`insights/pool` отдаёт состояние графа кандидатов и свежесть волн: `graphEdges`, `graphCandidates`, `playableCandidates`, `candidatesByHop`, `recentOverlapPercent` (последние 10 генераций), `lastOverlapPercent`, `lastPoolSize`.
 
 Explanation возвращает reason codes и числовые вкладчики, а не сгенерированную LLM историю.
 

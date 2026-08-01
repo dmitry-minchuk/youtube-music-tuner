@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.api import errors
 from app.integrations.youtube_music.ledger import (
+    DISCOVERY_CALLS_PER_DAY,
     GLOBAL_PLAYLIST_REQUESTS_PER_DAY,
     LIBRARY_SYNC_PER_DAY,
     CallBudget,
@@ -24,13 +25,16 @@ from app.persistence.database import get_session
 from app.persistence.models import (
     ApiCallLedger,
     Artist,
+    CandidateEdge,
     ModelSnapshot,
     PlaybackSession,
     QueueGeneration,
     QueueItem,
+    Track,
     TrackArtist,
     utcnow,
 )
+from app.recommender.graph import graph_size
 from app.recommender.learning_state import (
     BOOTSTRAP_MIN_NEGATIVE,
     BOOTSTRAP_MIN_POSITIVE,
@@ -186,6 +190,47 @@ def _last_training(db: Session) -> str | None:
     return row.isoformat() + "Z" if row else None
 
 
+@router.get("/insights/pool")
+def pool_health(db: Session = Depends(get_session)) -> dict[str, Any]:
+    """How much material the wave has and how fresh it stays.
+
+    These two numbers are what the whole graph exists for: a pool that keeps
+    growing, and waves that do not repeat each other.
+    """
+    edges, candidates = graph_size(db)
+    playable = (
+        db.scalar(
+            select(func.count(func.distinct(CandidateEdge.candidate_video_id)))
+            .select_from(CandidateEdge)
+            .join(Track, Track.video_id == CandidateEdge.candidate_video_id)
+            .where(Track.is_playable.is_(True), Track.remote_deleted_at.is_(None))
+        )
+        or 0
+    )
+    hops = db.execute(
+        select(CandidateEdge.hop, func.count(func.distinct(CandidateEdge.candidate_video_id)))
+        .group_by(CandidateEdge.hop)
+        .order_by(CandidateEdge.hop)
+    ).all()
+
+    recent = db.execute(
+        select(QueueGeneration.overlap_previous_percent, QueueGeneration.pool_size)
+        .order_by(QueueGeneration.created_at.desc())
+        .limit(10)
+    ).all()
+    overlaps = [int(value) for value, _ in recent]
+
+    return {
+        "graphEdges": edges,
+        "graphCandidates": candidates,
+        "playableCandidates": playable,
+        "candidatesByHop": {str(hop): int(count) for hop, count in hops},
+        "recentOverlapPercent": overlaps,
+        "lastOverlapPercent": overlaps[0] if overlaps else None,
+        "lastPoolSize": int(recent[0][1]) if recent else None,
+    }
+
+
 @router.get("/tracks/{video_id}/explanation")
 def track_explanation(
     video_id: str, generationId: str, db: Session = Depends(get_session)
@@ -235,6 +280,10 @@ def api_budget(db: Session = Depends(get_session)) -> dict[str, Any]:
         "playlistRequests": {
             "used": budget.global_playlist_requests_today(),
             "limit": GLOBAL_PLAYLIST_REQUESTS_PER_DAY,
+        },
+        "discoveryCalls": {
+            "used": budget.discovery_calls_today(),
+            "limit": DISCOVERY_CALLS_PER_DAY,
         },
         "externalCallsLast24h": calls_today,
         "circuit": {

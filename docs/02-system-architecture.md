@@ -153,11 +153,15 @@ sequenceDiagram
 Типы работ:
 
 - `library_sync`;
-- `candidate_refresh`;
+- `candidate_refresh` — раз в сутки, обход от свежих seed;
+- `graph_expand` — каждые 6 часов, расширение границы графа кандидатов;
+- `affinity_rollup` — каждые 6 часов, пересчёт скользящих окон агрегатов;
 - `model_train`;
 - `playlist_publish`;
 - `retention_cleanup`;
 - `database_backup`.
+
+`graph_expand` — единственная периодическая работа кроме `candidate_refresh`, которая тратит внешние вызовы; `affinity_rollup` полностью локальная.
 
 ## 9. Состояние и кеширование
 

@@ -94,19 +94,27 @@ Raw events остаются источником повторного расчё
 - `seed_video_id`, `candidate_video_id`;
 - `source_type`: RELATED | RADIO | MOOD | PLAYLIST;
 - `source_key`, `rank`, `fetched_at`, `expires_at`;
-- UNIQUE `(seed_video_id, candidate_video_id, source_type, source_key)`.
+- `hop` — расстояние от positive root, 1..3;
+- UNIQUE `(seed_video_id, candidate_video_id, source_type, source_key)`;
+- индексы по `seed_video_id` и `candidate_video_id` для обхода графа.
 
-### `track_affinity`
+`expires_at` — не срок жизни строки, а отметка «seed можно опросить заново». Ребро остаётся в графе и после этой даты: оно фиксирует факт о каталоге, а не кэширует ответ. Ранжирование читает весь граф, а не свежее окно.
+
+### `track_affinity` и `artist_affinity`
 
 Материализованные агрегаты по track/artist:
 
 - play counts 1/7/30/all time;
 - completion/skip/replay counts;
-- decayed reward;
+- decayed reward — экспоненциально взвешенное среднее с полураспадом 30 дней;
 - last played/liked/skipped;
 - confidence and aggregate version.
 
 Таблица ускоряет ранжирование, но может быть полностью пересоздана из sessions/library.
+
+Обновление происходит **сразу после переагрегации сессии**, а не суточным батчем: пропуск должен влиять на следующий трек, а не на завтрашнюю выдачу. Пересчёт всегда полный по треку (а не инкрементальный), потому что батч телеметрии может прийти повторно — так счётчики не раздуваются. Job `affinity_rollup` раз в 6 часов пересчитывает всё: скользящие окна 1/7/30 дней сужаются со временем и без новых прослушиваний.
+
+Пока эти таблицы были пусты, `fatigue`, `recent_skip`, `novelty` и `rediscovery` тождественно равнялись нулю, то есть история прослушиваний не влияла на ранжирование вообще.
 
 ### `feature_snapshots`
 
@@ -130,6 +138,8 @@ Raw events остаются источником повторного расчё
 ### `queue_generations` и `queue_items`
 
 Generation хранит temperature, mood, serving policy, nullable serving/shadow model IDs, `quality_score_source`, configured/effective target size, random seed, candidate pool watermark и полный упорядоченный результат с score/reason codes. Это обеспечивает воспроизводимость и объяснения как для rule baseline, так и для ACTIVE LinUCB.
+
+Дополнительно фиксируются два показателя свежести: `pool_size` — сколько играбельных кандидатов было доступно, и `overlap_previous_percent` — какую долю этой волны уже содержала предыдущая. Последние генерации сами являются входом следующей (docs/05 §11), поэтому воспроизводимость по `random_seed` означает «то же состояние базы плюс тот же seed», а не «повторный вызов подряд».
 
 ### `playlist_publications`
 
@@ -184,7 +194,7 @@ Ledger используется для бюджета и диагностики,
 - playback session summaries — бессрочно до ручного удаления;
 - api call ledger — 90 дней;
 - failed job detail — 30 дней;
-- candidate edges — удаляются через 30 дней после expiry;
+- candidate edges — удаляются, если не обновлялись год; `expires_at` их не удаляет (§4);
 - feature snapshots — 180 дней, синхронно с raw telemetry, после чего online update опирается на сохранённые session/model aggregates;
 - playlist backups — последние 30 snapshots на managed playlist;
 - model snapshots — активный + последние 10;
