@@ -43,3 +43,45 @@ def test_csrf_token_must_match_session(client: TestClient) -> None:
     client.get("/api/v1/session")
     response = client.post("/api/v1/auth/disconnect", headers={"X-CSRF-Token": "wrong-token"})
     assert response.status_code == 403
+
+
+def test_beacon_path_accepts_session_cookie_without_csrf_header(client: TestClient) -> None:
+    """sendBeacon cannot set headers; SameSite=Strict cookie is the guard."""
+    client.get("/api/v1/session")  # sets the cookie, header deliberately unused
+    response = client.post(
+        "/api/v1/telemetry/events:beacon",
+        json={
+            "schemaVersion": 1,
+            "events": [
+                {
+                    "clientEventId": "beacon-1",
+                    "sessionId": "s-beacon",
+                    "sequenceNo": 1,
+                    "videoId": "v1",
+                    "type": "page_closing",
+                    "occurredAt": "2026-08-01T18:42:10.123Z",
+                    "monotonicMs": 1000,
+                    "payload": {},
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+
+
+def test_beacon_path_still_requires_a_session(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/telemetry/events:beacon", json={"schemaVersion": 1, "events": []}
+    )
+    assert response.status_code == 403
+
+
+def test_beacon_path_rejects_a_foreign_origin(client: TestClient) -> None:
+    client.get("/api/v1/session")
+    response = client.post(
+        "/api/v1/telemetry/events:beacon",
+        headers={"Origin": "http://evil.example.com"},
+        json={"schemaVersion": 1, "events": []},
+    )
+    assert response.status_code == 403

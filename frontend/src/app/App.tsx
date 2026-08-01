@@ -4,6 +4,8 @@ import { InsightsPage } from "@/features/insights/InsightsPage";
 import { PlaylistsPage } from "@/features/playlists/PlaylistsPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { WavePage } from "@/features/wave/WavePage";
+import { PlayerBar } from "@/player/PlayerBar";
+import { PlayerPanel } from "@/player/PlayerPanel";
 import { Sidebar } from "@/app/Sidebar";
 import { StatusIndicator } from "@/app/StatusIndicator";
 import { routeFromHash, type RouteId } from "@/app/routes";
@@ -34,14 +36,20 @@ export function App(): React.JSX.Element {
   return (
     <div className={styles.shell}>
       <Sidebar active={route} />
-      <main className={styles.main} id="main-content">
-        <header className={styles.topbar}>
-          <StatusIndicator />
-        </header>
-        <div className={styles.content}>
-          <Page />
+      <div className={styles.body}>
+        <div className={styles.workspace}>
+          <main className={styles.main} id="main-content">
+            <header className={styles.topbar}>
+              <StatusIndicator />
+            </header>
+            <div className={styles.content}>
+              <Page />
+            </div>
+          </main>
+          <PlayerPanel />
         </div>
-      </main>
+        <PlayerBar />
+      </div>
     </div>
   );
 }

@@ -5,6 +5,21 @@
   background: var(--graphite-900);
 }
 
+.body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.workspace {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--space-5);
+  padding-right: var(--space-6);
+}
+
 .main {
   display: flex;
   min-width: 0;
@@ -16,12 +31,21 @@
   min-height: 52px;
   align-items: center;
   justify-content: flex-end;
-  padding: var(--space-3) var(--space-6);
+  padding: var(--space-3) 0;
 }
 
 .content {
   flex: 1;
-  padding: 0 var(--space-6) var(--space-7);
+  padding-bottom: var(--space-6);
+  padding-left: var(--space-6);
+}
+
+/* Below 1280px the player becomes a narrower column but stays visible and
+   large enough — it must never be hidden while playing (docs/06 section 3). */
+@media (max-width: 1279px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
 }
 
 @media (max-width: 1023px) {
@@ -29,7 +53,12 @@
     grid-template-columns: 64px minmax(0, 1fr);
   }
 
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: var(--space-4);
+  }
+
   .content {
-    padding: 0 var(--space-4) var(--space-6);
+    padding-left: var(--space-4);
   }
 }

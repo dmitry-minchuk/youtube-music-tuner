@@ -25,6 +25,12 @@ CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 PUBLIC_PATHS = frozenset({"/health/live", "/health/ready"})
 
+# navigator.sendBeacon cannot set headers, so the pagehide delivery path
+# authenticates with the HttpOnly SameSite=Strict cookie and an exact Origin
+# instead of the CSRF header. SameSite=Strict means the cookie is never sent
+# on a cross-site POST, so this path is not CSRF-reachable.
+BEACON_PATHS = frozenset({"/api/v1/telemetry/events:beacon"})
+
 
 class SessionStore:
     """In-process session registry: session id -> CSRF token."""
@@ -45,6 +51,9 @@ class SessionStore:
         if expected is None:
             return False
         return hmac.compare_digest(expected, csrf_token)
+
+    def exists(self, session_id: str | None) -> bool:
+        return bool(session_id) and session_id in self._tokens
 
     def clear(self) -> None:
         self._tokens.clear()
@@ -74,8 +83,10 @@ class GuardMiddleware(BaseHTTPMiddleware):
             if origin is not None and origin not in self._settings.allowed_origins:
                 return self._reject("Origin not allowed", request)
             session_id = request.cookies.get(SESSION_COOKIE)
-            csrf_token = request.headers.get(CSRF_HEADER)
-            if not self._sessions.verify(session_id, csrf_token):
+            if request.url.path in BEACON_PATHS:
+                if not self._sessions.exists(session_id):
+                    return self._reject("Missing or invalid session cookie", request)
+            elif not self._sessions.verify(session_id, request.headers.get(CSRF_HEADER)):
                 return self._reject("Missing or invalid session token", request)
 
         response = await call_next(request)
