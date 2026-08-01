@@ -11,6 +11,16 @@ import { PlaybackTracker, SAMPLE_INTERVAL_MS } from "@/player/playbackTracker";
 import { TelemetryClient } from "@/player/telemetryClient";
 import type { PlayerPort, PlayerState, TelemetryEventType } from "@/player/types";
 
+export interface WaveMeta {
+  queueId: string;
+  generationId: string;
+  targetFamiliarPercent: number;
+  actualFamiliarPercent: number;
+  relaxations: string[];
+  temperature: number;
+  mood: string;
+}
+
 export interface QueueTrack {
   videoId: string;
   title: string;
@@ -27,6 +37,7 @@ interface PlayerStoreState {
   queue: QueueTrack[];
   queueId: string | null;
   generationId: string | null;
+  waveMeta: WaveMeta | null;
   index: number;
   sessionId: string | null;
   positionSeconds: number;
@@ -40,7 +51,7 @@ interface PlayerStoreState {
 
   attachPort: (port: PlayerPort) => void;
   detachPort: () => void;
-  setQueue: (tracks: QueueTrack[], meta?: { queueId?: string; generationId?: string }) => void;
+  setQueue: (tracks: QueueTrack[], meta?: WaveMeta) => void;
   playIndex: (index: number) => Promise<void>;
   togglePlay: () => void;
   next: () => Promise<void>;
@@ -168,6 +179,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     queue: [],
     queueId: null,
     generationId: null,
+    waveMeta: null,
     index: 0,
     sessionId: null,
     positionSeconds: 0,
@@ -223,6 +235,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
         queue: tracks,
         queueId: meta?.queueId ?? get().queueId,
         generationId: meta?.generationId ?? get().generationId,
+        waveMeta: meta ?? get().waveMeta,
       });
     },
 

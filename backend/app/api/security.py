@@ -106,8 +106,13 @@ class GuardMiddleware(BaseHTTPMiddleware):
 
 
 def content_security_policy(settings: Settings) -> str:
-    """Allow our own resources plus the YouTube IFrame player, no unsafe-eval."""
-    origins = " ".join(sorted(settings.allowed_origins))
+    """Allow our own resources plus the YouTube IFrame player, no unsafe-eval.
+
+    Bracketed IPv6 literals are not a valid CSP host-source, so they are left
+    out; 'self' already covers whichever loopback form the page was loaded
+    from, and listing them only produced console warnings.
+    """
+    origins = " ".join(origin for origin in sorted(settings.allowed_origins) if "[" not in origin)
     return "; ".join(
         [
             "default-src 'self'",

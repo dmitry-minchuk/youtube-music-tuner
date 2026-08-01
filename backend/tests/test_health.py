@@ -37,3 +37,10 @@ def test_security_headers_present(client: TestClient) -> None:
     csp = response.headers["Content-Security-Policy"]
     assert "frame-src https://www.youtube.com" in csp
     assert "unsafe-eval" not in csp
+
+
+def test_csp_has_no_invalid_ipv6_source(client: TestClient) -> None:
+    """Bracketed IPv6 literals are not valid CSP host-sources."""
+    csp = client.get("/health/live").headers["Content-Security-Policy"]
+    assert "[::1]" not in csp
+    assert "'self'" in csp

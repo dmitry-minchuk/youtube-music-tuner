@@ -43,7 +43,6 @@ export function WavePage(): React.JSX.Element {
   const settings = useSettings();
   const [temperature, setTemperature] = useState(50);
   const [mood, setMood] = useState<Mood>("ANY");
-  const [wave, setWave] = useState<WaveResponse | null>(null);
   const retuneTimer = useRef<number | null>(null);
 
   const status = useSystemStatus();
@@ -55,22 +54,32 @@ export function WavePage(): React.JSX.Element {
   const playerState = usePlayerStore((store) => store.state);
   const currentVideoId = usePlayerStore((store) => store.queue[store.index]?.videoId);
   const unplayableSkipped = usePlayerStore((store) => store.unplayableSkipped);
+  // The queue lives in the store: switching sections must not lose it.
+  const queue = usePlayerStore((store) => store.queue);
+  const waveMeta = usePlayerStore((store) => store.waveMeta);
 
-  // Adopt the saved defaults once, without fighting later edits.
+  // Adopt saved defaults once, unless a wave is already running — then its
+  // own settings win, so returning to the page shows what is actually playing.
   const defaultsApplied = useRef(false);
   useEffect(() => {
-    if (defaultsApplied.current || !settings.data) return;
+    if (defaultsApplied.current) return;
+    if (waveMeta) {
+      defaultsApplied.current = true;
+      setTemperature(waveMeta.temperature);
+      setMood(waveMeta.mood as Mood);
+      return;
+    }
+    if (!settings.data) return;
     defaultsApplied.current = true;
     setTemperature(settings.data.defaultTemperature);
     setMood(settings.data.defaultMood);
-  }, [settings.data]);
+  }, [settings.data, waveMeta]);
 
   useEffect(() => () => {
     if (retuneTimer.current !== null) window.clearTimeout(retuneTimer.current);
   }, []);
 
-  const applyWave = (response: WaveResponse) => {
-    setWave(response);
+  const applyWave = (response: WaveResponse, usedTemperature: number, usedMood: Mood) => {
     setQueue(
       response.items.map((item) => ({
         videoId: item.track.videoId,
@@ -80,7 +89,15 @@ export function WavePage(): React.JSX.Element {
         reasonCodes: item.reasonCodes,
         familiarity: item.familiarity,
       })),
-      { queueId: response.queueId, generationId: response.generationId },
+      {
+        queueId: response.queueId,
+        generationId: response.generationId,
+        targetFamiliarPercent: response.mix.targetFamiliarPercent,
+        actualFamiliarPercent: response.mix.actualFamiliarPercent,
+        relaxations: response.relaxations,
+        temperature: usedTemperature,
+        mood: usedMood,
+      },
     );
   };
 
@@ -89,7 +106,7 @@ export function WavePage(): React.JSX.Element {
       { temperature, mood },
       {
         onSuccess: (response) => {
-          applyWave(response);
+          applyWave(response, temperature, mood);
           void playIndex(0);
         },
       },
@@ -98,12 +115,13 @@ export function WavePage(): React.JSX.Element {
 
   /** Rebuild only the unplayed tail; the slider stays instant either way. */
   const scheduleRetune = (nextTemperature: number, nextMood: Mood) => {
-    if (!wave) return;
+    const queueId = waveMeta?.queueId;
+    if (!queueId) return;
     if (retuneTimer.current !== null) window.clearTimeout(retuneTimer.current);
     retuneTimer.current = window.setTimeout(() => {
       patchWave.mutate(
-        { queueId: wave.queueId, temperature: nextTemperature, mood: nextMood },
-        { onSuccess: applyWave },
+        { queueId, temperature: nextTemperature, mood: nextMood },
+        { onSuccess: (response) => applyWave(response, nextTemperature, nextMood) },
       );
     }, RETUNE_DEBOUNCE_MS);
   };
@@ -127,7 +145,7 @@ export function WavePage(): React.JSX.Element {
   // While retuning, show what the slider promises rather than a stale mix.
   const shownMix = patchWave.isPending
     ? expectedFamiliarPercent(temperature)
-    : (wave?.mix.actualFamiliarPercent ?? expectedFamiliarPercent(temperature));
+    : (waveMeta?.actualFamiliarPercent ?? expectedFamiliarPercent(temperature));
 
   return (
     <>
@@ -173,7 +191,7 @@ export function WavePage(): React.JSX.Element {
           <Button variant="primary" onClick={startWave} disabled={createWave.isPending}>
             {createWave.isPending
               ? "Preparing…"
-              : wave && playerState === "PLAYING"
+              : queue.length > 0 && playerState === "PLAYING"
                 ? "Restart Wave"
                 : "Start Wave"}
           </Button>
@@ -199,9 +217,9 @@ export function WavePage(): React.JSX.Element {
           </p>
         )}
 
-        {wave && wave.relaxations.length > 0 && (
+        {waveMeta && waveMeta.relaxations.length > 0 && (
           <p className={styles.relaxation} role="status">
-            {wave.relaxations.includes("FAMILIAR_POOL_WIDENED")
+            {waveMeta.relaxations.includes("FAMILIAR_POOL_WIDENED")
               ? "Not enough familiar tracks yet — filled the gap with discovery picks."
               : "Diversity widened to fill the queue."}
           </p>
@@ -209,16 +227,15 @@ export function WavePage(): React.JSX.Element {
       </Panel>
 
       <Panel title="Up next">
-        {!wave && <EmptyState message="Start the Wave to build a queue from your local pool." />}
-        {wave && (
+        {queue.length === 0 && (
+          <EmptyState message="Start the Wave to build a queue from your local pool." />
+        )}
+        {queue.length > 0 && (
           <ol className={styles.queue} aria-busy={patchWave.isPending}>
-            {wave.items.map((item, index) => {
-              const isCurrent = item.track.videoId === currentVideoId || index === currentIndex;
+            {queue.map((item, index) => {
+              const isCurrent = item.videoId === currentVideoId || index === currentIndex;
               return (
-                <li
-                  key={item.track.videoId}
-                  className={isCurrent ? styles.currentItem : undefined}
-                >
+                <li key={item.videoId} className={isCurrent ? styles.currentItem : undefined}>
                   <button
                     type="button"
                     className={styles.queueRow}
@@ -228,10 +245,10 @@ export function WavePage(): React.JSX.Element {
                     <span className={styles.position}>
                       {isCurrent && playerState === "PLAYING"
                         ? "▶"
-                        : String(item.position).padStart(2, "0")}
+                        : String(index + 1).padStart(2, "0")}
                     </span>
-                    <span className={styles.queueTitle}>{item.track.title}</span>
-                    <span className={styles.queueArtist}>{item.track.artists.join(", ")}</span>
+                    <span className={styles.queueTitle}>{item.title}</span>
+                    <span className={styles.queueArtist}>{item.artists.join(", ")}</span>
                     <span
                       className={
                         item.familiarity === "FAMILIAR" ? styles.familiar : styles.discovery
@@ -240,7 +257,7 @@ export function WavePage(): React.JSX.Element {
                       {item.familiarity === "FAMILIAR" ? "familiar" : "discovery"}
                     </span>
                     <span className={styles.reason}>
-                      {item.reasonCodes[0] ? humanizeReason(item.reasonCodes[0]) : ""}
+                      {item.reasonCodes?.[0] ? humanizeReason(item.reasonCodes[0]) : ""}
                     </span>
                   </button>
                 </li>
