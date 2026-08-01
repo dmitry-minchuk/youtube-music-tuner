@@ -1,8 +1,8 @@
 .stack {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  max-width: 760px;
+  gap: var(--space-5);
+  max-width: 900px;
 }
 
 .definitions {
@@ -10,6 +10,14 @@
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--space-4);
   margin: 0;
+}
+
+.definitions > div {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(11, 14, 18, 0.22);
 }
 
 .definitions dt {
@@ -21,6 +29,8 @@
 
 .definitions dd {
   margin: var(--space-1) 0 0;
+  color: var(--text-primary);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -44,20 +54,30 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-2) 0;
+  min-height: 56px;
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.toggleRow:hover {
+  border-color: var(--border-soft);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .toggleRow + .toggleRow {
   align-items: center;
-  border-top: 1px solid var(--border-soft);
+  border-top-color: var(--border-soft);
   margin-top: var(--space-3);
   padding-top: var(--space-4);
 }
 
 .toggleRow input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   margin-top: 2px;
   accent-color: var(--coral-500);
 }
@@ -70,7 +90,8 @@
 
 .toggleTitle {
   display: block;
-  font-weight: 500;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .toggleHint {
@@ -82,7 +103,11 @@
 }
 
 .toggleValue {
-  min-width: 28px;
-  color: var(--text-muted);
+  min-width: 42px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--teal-dim);
+  color: var(--teal-400);
   font-variant-numeric: tabular-nums;
+  text-align: center;
 }

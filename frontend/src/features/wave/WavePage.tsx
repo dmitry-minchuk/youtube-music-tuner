@@ -169,13 +169,12 @@ export function WavePage(): React.JSX.Element {
           </label>
 
           <div className={styles.temperature}>
-            <div className={styles.temperatureLabels}>
-              <span>Familiar</span>
+            <div className={styles.temperatureHeader}>
+              <span className={styles.label}>Discovery balance</span>
               <span className={styles.mixValue}>
                 {describeMix(shownMix)}
                 {patchWave.isPending && <span className={styles.retuning}> · retuning…</span>}
               </span>
-              <span>Discovery</span>
             </div>
             <input
               type="range"
@@ -186,6 +185,10 @@ export function WavePage(): React.JSX.Element {
               aria-label="Temperature"
               aria-valuetext={describeMix(expectedFamiliarPercent(temperature))}
             />
+            <div className={styles.temperatureEnds} aria-hidden="true">
+              <span>Familiar</span>
+              <span>Discovery</span>
+            </div>
           </div>
 
           <Button variant="primary" onClick={startWave} disabled={createWave.isPending}>

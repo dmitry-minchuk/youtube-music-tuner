@@ -4,10 +4,10 @@
   display: grid;
   align-items: end;
   gap: var(--space-5);
-  grid-template-columns: minmax(160px, auto) minmax(240px, 1fr) auto;
+  grid-template-columns: 168px minmax(260px, 1fr) auto;
 }
 
-@media (max-width: 1279px) {
+@media (max-width: 1350px) {
   .controls {
     grid-template-columns: minmax(140px, auto) minmax(0, 1fr);
     row-gap: var(--space-4);
@@ -21,41 +21,51 @@
 
 .label {
   display: block;
-  margin-bottom: var(--space-2);
+  margin-bottom: 7px;
   color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
 .mood select {
-  min-height: var(--hit-target);
-  min-width: 160px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--graphite-800);
-  color: var(--text-primary);
-  font: inherit;
+  width: 100%;
 }
 
 .temperature {
   min-width: 0;
 }
 
-.temperatureLabels {
+.temperatureHeader,
+.temperatureEnds {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: var(--space-1);
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
+}
+
+.temperatureHeader {
+  min-height: 24px;
+  margin-bottom: 1px;
+}
+
+.temperatureHeader .label {
+  margin-bottom: 0;
+}
+
+.temperatureEnds {
+  margin-top: -3px;
+  color: #7f8998;
+  font-size: 0.72rem;
 }
 
 .mixValue {
+  margin-left: var(--space-3);
   color: var(--teal-400);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .temperature input {
@@ -64,9 +74,22 @@
 }
 
 .learning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-top: var(--space-5);
   color: var(--text-muted);
   font-size: 0.85rem;
+}
+
+.learning::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--teal-500);
+  box-shadow: 0 0 12px var(--teal-glow);
+  content: "";
 }
 
 .relaxation {
@@ -93,17 +116,22 @@
   align-items: center;
   gap: var(--space-3);
   grid-template-columns: 32px minmax(0, 2fr) minmax(0, 1.4fr) 84px minmax(0, 1.4fr);
-  padding: var(--space-2) var(--space-2);
+  min-height: 52px;
+  padding: 6px var(--space-3);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   text-align: left;
 }
 
 .queueRow:hover {
-  background: var(--graphite-800);
+  border-color: var(--border-soft);
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .currentItem .queueRow {
-  background: var(--coral-dim);
+  border-color: rgba(255, 117, 101, 0.2);
+  background: linear-gradient(90deg, var(--coral-dim), transparent);
+  box-shadow: inset 3px 0 0 var(--coral-500);
 }
 
 .position {
@@ -161,6 +189,16 @@
 
   .reason {
     display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .controls > :last-child {
+    grid-column: auto;
   }
 }
 

@@ -14,12 +14,16 @@ body,
 }
 
 body {
-  background: var(--graphite-900);
+  background:
+    radial-gradient(circle at 22% -10%, rgba(73, 203, 199, 0.08), transparent 32rem),
+    radial-gradient(circle at 92% 8%, rgba(255, 117, 101, 0.07), transparent 30rem),
+    var(--graphite-900);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 h1,
@@ -32,10 +36,11 @@ h4 {
 }
 
 h1 {
-  font-size: 1.6rem;
+  font-size: clamp(1.75rem, 2.4vw, 2.15rem);
+  line-height: 1.12;
 }
 h2 {
-  font-size: 1.15rem;
+  font-size: 1.1rem;
 }
 h3 {
   font-size: 0.95rem;
@@ -54,9 +59,79 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--teal-400);
-  outline-offset: 2px;
+  outline: 3px solid var(--teal-400);
+  outline-offset: 3px;
   border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--teal-dim);
+  color: var(--text-primary);
+}
+
+select,
+input[type="search"],
+textarea {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-raised);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 8px 24px rgba(0, 0, 0, 0.12);
+  color: var(--text-primary);
+  font: inherit;
+  transition: border-color var(--transition), background-color var(--transition),
+    box-shadow var(--transition);
+}
+
+select:hover,
+input[type="search"]:hover,
+textarea:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background-color: var(--graphite-700);
+}
+
+select:focus-visible,
+input[type="search"]:focus-visible,
+textarea:focus-visible {
+  border-color: var(--teal-500);
+  box-shadow: 0 0 0 4px var(--teal-dim);
+}
+
+select {
+  min-height: var(--hit-target);
+  padding: 0 42px 0 var(--space-4);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23929cab' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  cursor: pointer;
+}
+
+select option {
+  background: var(--graphite-800);
+  color: var(--text-primary);
+}
+
+select:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+input[type="search"] {
+  min-height: var(--hit-target);
+  padding: 0 var(--space-4);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #778292;
+}
+
+input[type="range"] {
+  min-height: var(--hit-target);
+  accent-color: var(--teal-500);
+  cursor: pointer;
 }
 
 /* Every interactive control keeps the documented 40x40 minimum hit target. */
@@ -64,6 +139,17 @@ button,
 a[role="button"],
 input[type="range"] {
   min-height: var(--hit-target);
+}
+
+@media (forced-colors: active) {
+  select {
+    appearance: auto;
+    background-image: none;
+  }
+
+  :focus-visible {
+    outline-color: Highlight;
+  }
 }
 
 .visually-hidden {

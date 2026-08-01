@@ -3,37 +3,41 @@
 :root {
   color-scheme: dark;
 
-  --graphite-900: #16181c;
-  --graphite-850: #1b1e23;
-  --graphite-800: #212530;
-  --graphite-700: #2a2f3a;
-  --graphite-600: #363c49;
+  --graphite-950: #0b0e12;
+  --graphite-900: #10141a;
+  --graphite-850: #151a21;
+  --graphite-800: #1b222c;
+  --graphite-700: #242d38;
+  --graphite-600: #323d4b;
 
-  --coral-500: #ff6f5e;
-  --coral-400: #ff8b7c;
-  --coral-dim: rgba(255, 111, 94, 0.16);
+  --coral-500: #ff7565;
+  --coral-400: #ff9588;
+  --coral-dim: rgba(255, 117, 101, 0.14);
+  --coral-glow: rgba(255, 117, 101, 0.24);
 
-  --teal-500: #3fc4c0;
-  --teal-400: #63d6d2;
-  --teal-dim: rgba(63, 196, 192, 0.16);
+  --teal-500: #49cbc7;
+  --teal-400: #73dcd8;
+  --teal-dim: rgba(73, 203, 199, 0.13);
+  --teal-glow: rgba(73, 203, 199, 0.22);
 
-  --text-primary: #f2f4f7;
-  --text-secondary: #b3bac6;
-  --text-muted: #8a92a1;
+  --text-primary: #f5f7fa;
+  --text-secondary: #c0c7d2;
+  --text-muted: #929cab;
 
   --danger: #ff5f56;
   --warning: #f0b849;
   --success: #5fd08a;
 
-  --surface: var(--graphite-850);
-  --surface-raised: var(--graphite-800);
-  --surface-sunken: var(--graphite-900);
-  --border-soft: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --surface: rgba(22, 27, 35, 0.88);
+  --surface-raised: rgba(30, 37, 47, 0.92);
+  --surface-sunken: rgba(11, 14, 18, 0.72);
+  --border-soft: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.15);
 
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
+  --radius-xs: 8px;
+  --radius-sm: 11px;
+  --radius-md: 17px;
+  --radius-lg: 24px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -48,8 +52,9 @@
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
   --hit-target: 40px;
-  --shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.35);
-  --transition: 160ms ease;
+  --shadow-soft: 0 18px 50px rgba(0, 0, 0, 0.28);
+  --shadow-float: 0 22px 70px rgba(0, 0, 0, 0.42);
+  --transition: 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {

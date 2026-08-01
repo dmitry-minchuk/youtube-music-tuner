@@ -1,14 +1,15 @@
 .stack {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  max-width: 860px;
+  gap: var(--space-5);
+  max-width: 920px;
 }
 
 .headline {
   margin-bottom: var(--space-4);
-  font-size: 1.05rem;
-  font-weight: 600;
+  color: var(--teal-400);
+  font-size: 1.08rem;
+  font-weight: 650;
 }
 
 .definitions {
@@ -16,6 +17,14 @@
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--space-4);
   margin: 0;
+}
+
+.definitions > div {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(11, 14, 18, 0.24);
 }
 
 .definitions dt {
@@ -27,6 +36,9 @@
 
 .definitions dd {
   margin: var(--space-1) 0 0;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -37,20 +49,23 @@
 }
 
 .select {
-  min-height: var(--hit-target);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--graphite-800);
-  color: var(--text-primary);
-  font: inherit;
+  min-width: 124px;
 }
 
 .toggle {
   min-height: var(--hit-target);
   padding: 0 var(--space-3);
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+  background: rgba(36, 45, 56, 0.72);
   color: var(--text-secondary);
   font-size: 0.85rem;
+  font-weight: 600;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.toggle:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: var(--graphite-600);
+  color: var(--text-primary);
 }

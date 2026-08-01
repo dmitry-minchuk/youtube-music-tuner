@@ -1,68 +1,181 @@
 .sidebar {
+  position: relative;
+  z-index: 20;
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  gap: var(--space-6);
-  padding: var(--space-5) var(--space-3);
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-4);
   border-right: 1px solid var(--border-soft);
-  background: var(--graphite-850);
+  background: rgba(17, 21, 27, 0.86);
+  box-shadow: 18px 0 50px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(24px);
 }
 
 .brand {
   display: flex;
+  min-height: 44px;
   align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
 }
 
 .brandMark {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--coral-500), var(--teal-500));
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 13px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), transparent 42%),
+    linear-gradient(135deg, rgba(255, 117, 101, 0.82), rgba(73, 203, 199, 0.7));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22), 0 0 24px rgba(73, 203, 199, 0.1);
+  color: #10141a;
+}
+
+.brandText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
 }
 
 .brandName {
-  font-size: 0.82rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  color: var(--text-primary);
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.brandTag {
+  color: var(--text-muted);
+  font-size: 0.67rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.sectionLabel {
+  margin: 8px var(--space-3) -8px;
+  color: #747f8f;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+.list li {
+  position: relative;
+}
+
 .link {
+  position: relative;
   display: flex;
-  align-items: center;
   min-height: var(--hit-target);
+  align-items: center;
+  gap: var(--space-3);
   padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  font-weight: 550;
   text-decoration: none;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), transform var(--transition),
+    box-shadow var(--transition);
 }
 
 .link:hover {
-  background: var(--graphite-800);
+  background: rgba(255, 255, 255, 0.045);
   color: var(--text-primary);
+  transform: translateX(2px);
 }
 
 .linkActive {
-  background: var(--coral-dim);
+  background: linear-gradient(90deg, var(--coral-dim), rgba(255, 117, 101, 0.055));
+  box-shadow: inset 3px 0 0 var(--coral-500);
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 650;
 }
 
-@media (max-width: 1023px) {
-  .brandName,
+.linkActive .linkIcon {
+  color: var(--coral-400);
+  filter: drop-shadow(0 0 8px var(--coral-glow));
+}
+
+.linkIcon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  color: #8993a3;
+  transition: color var(--transition), filter var(--transition);
+}
+
+.linkLabel {
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .sidebar {
+    align-items: stretch;
+    padding: var(--space-5) var(--space-3);
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .brandText,
+  .sectionLabel {
+    display: none;
+  }
+
   .link {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .link:hover {
+    transform: none;
+  }
+
+  .linkLabel {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 18px);
+    z-index: 30;
+    padding: 7px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xs);
+    background: var(--graphite-700);
+    box-shadow: var(--shadow-soft);
+    color: var(--text-primary);
     font-size: 0.8rem;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-6px, -50%);
+    transition: opacity var(--transition), transform var(--transition);
+  }
+
+  .link:hover .linkLabel,
+  .link:focus-visible .linkLabel {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+}
+
+@media (forced-colors: active) {
+  .linkActive {
+    border: 2px solid Highlight;
+    box-shadow: none;
   }
 }

@@ -3,9 +3,9 @@
 .shell {
   display: grid;
   height: 100vh;
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
   overflow: hidden;
-  background: var(--graphite-900);
+  background: transparent;
 }
 
 .body {
@@ -18,11 +18,12 @@
 .workspace {
   display: grid;
   min-height: 0;
-  gap: var(--space-5);
-  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--space-6);
+  grid-template-columns: minmax(0, 1fr) 336px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 var(--space-6);
+  padding: 0 clamp(20px, 2.4vw, 36px);
+  scrollbar-color: var(--graphite-600) transparent;
 }
 
 .main {
@@ -33,10 +34,14 @@
 
 .topbar {
   display: flex;
-  min-height: 52px;
+  min-height: 48px;
   align-items: center;
   justify-content: flex-end;
   padding: var(--space-3) 0;
+}
+
+.topbar:empty {
+  display: none;
 }
 
 .content {
@@ -45,37 +50,61 @@
   flex: 1;
   flex-direction: column;
   gap: var(--space-5);
+  padding-top: var(--space-5);
   padding-bottom: var(--space-6);
+}
+
+.topbar:not(:empty) + .content {
+  padding-top: 0;
 }
 
 /* The player column stays in view while the queue scrolls beside it. */
 .aside {
   position: sticky;
-  top: var(--space-4);
+  top: var(--space-5);
   align-self: start;
   padding-bottom: var(--space-6);
 }
 
 @media (max-width: 1279px) {
   .workspace {
+    grid-template-columns: minmax(0, 1fr) 292px;
+    gap: var(--space-4);
+    padding: 0 var(--space-5);
+  }
+}
+
+@media (max-width: 1180px) {
+  .shell {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+
+  .workspace {
     grid-template-columns: minmax(0, 1fr) 280px;
-    padding: 0 var(--space-4);
   }
 }
 
 /* Below 1024px the player moves above the content but stays visible and
    large enough — it must never be hidden while playing (docs/06 s.3). */
 @media (max-width: 1023px) {
-  .shell {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
-
   .workspace {
     grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 
   .aside {
     position: static;
     order: -1;
+    padding: var(--space-5) 0 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .workspace {
+    padding: 0 var(--space-3);
   }
 }

@@ -1,5 +1,6 @@
 import { formatDuration, useSetRating, useTrackRating } from "@/api/library";
 import { currentTrack, usePlayerStore } from "@/player/playerStore";
+import { Icon } from "@/ui/Icon";
 import styles from "@/player/PlayerBar.module.css";
 
 import type { RatingSyncStatus } from "@/api/library";
@@ -62,7 +63,7 @@ export function PlayerBar(): React.JSX.Element | null {
             aria-label="Previous track"
             disabled={!ready}
           >
-            ◀◀
+            <Icon name="previous" />
           </button>
           <button
             type="button"
@@ -72,7 +73,7 @@ export function PlayerBar(): React.JSX.Element | null {
             disabled={!ready}
             title={ready ? undefined : "Player is still loading"}
           >
-            {buffering ? "…" : isPlaying ? "❙❙" : "▶"}
+            {buffering ? "…" : <Icon name={isPlaying ? "pause" : "play"} />}
           </button>
           <button
             type="button"
@@ -80,7 +81,7 @@ export function PlayerBar(): React.JSX.Element | null {
             aria-label="Next track"
             disabled={!ready}
           >
-            ▶▶
+            <Icon name="next" />
           </button>
         </div>
 
@@ -105,24 +106,26 @@ export function PlayerBar(): React.JSX.Element | null {
 
       <div className={styles.right}>
         <div className={styles.ratings}>
-        <button
-          type="button"
-          className={liked ? `${styles.rateButton} ${styles.liked}` : styles.rateButton}
-          onClick={() => rate("LIKE")}
-          aria-pressed={liked}
-          aria-label={liked ? "Remove like" : "Like this track"}
-        >
-          {liked ? "♥" : "♡"} Like
-        </button>
-        <button
-          type="button"
-          className={disliked ? `${styles.rateButton} ${styles.disliked}` : styles.rateButton}
-          onClick={() => rate("DISLIKE")}
-          aria-pressed={disliked}
-          aria-label={disliked ? "Remove dislike" : "Dislike this track"}
-        >
-          {disliked ? "⊗" : "⊘"} Dislike
-        </button>
+          <button
+            type="button"
+            className={liked ? `${styles.rateButton} ${styles.liked}` : styles.rateButton}
+            onClick={() => rate("LIKE")}
+            aria-pressed={liked}
+            aria-label={liked ? "Remove like" : "Like this track"}
+          >
+            <Icon name="heart" size={17} />
+            Like
+          </button>
+          <button
+            type="button"
+            className={disliked ? `${styles.rateButton} ${styles.disliked}` : styles.rateButton}
+            onClick={() => rate("DISLIKE")}
+            aria-pressed={disliked}
+            aria-label={disliked ? "Remove dislike" : "Dislike this track"}
+          >
+            <Icon name="dislike" size={17} />
+            Dislike
+          </button>
           {(liked || disliked) && syncStatus && (
             <span
               className={syncStatus === "FAILED" ? styles.syncFailed : styles.sync}
@@ -135,6 +138,7 @@ export function PlayerBar(): React.JSX.Element | null {
 
         <label className={styles.volume} title={`Volume ${volume}%`}>
           <span className="visually-hidden">Volume</span>
+          <Icon name="volume" size={17} />
           <input
             type="range"
             min={0}
