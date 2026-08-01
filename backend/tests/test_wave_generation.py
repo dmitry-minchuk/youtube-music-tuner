@@ -179,10 +179,72 @@ def test_explicitly_excluded_candidates_are_dropped(db_session) -> None:
 
 
 def test_a_fixed_seed_reproduces_the_queue(db_session) -> None:
+    """Same state plus same seed means same queue.
+
+    A generation changes the state — the wave before this one is part of the
+    input now — so the first one is rolled back before the queue is rebuilt.
+    """
+    from app.persistence.models import QueueGeneration, QueueItem
+
     build_pool(db_session)
     first = generate_wave(db_session, WaveRequest(length=20, random_seed=1234))
+
+    db_session.query(QueueItem).filter_by(generation_id=first.generation_id).delete()
+    db_session.query(QueueGeneration).filter_by(generation_id=first.generation_id).delete()
+    db_session.flush()
+
     second = generate_wave(db_session, WaveRequest(length=20, random_seed=1234))
     assert [item.video_id for item in first.items] == [item.video_id for item in second.items]
+
+
+def test_consecutive_waves_do_not_repeat_each_other(db_session) -> None:
+    """The freshness goal: restarting the wave must feel like a new wave."""
+    build_pool(db_session, liked_count=10, discovery_count=90)
+
+    first = generate_wave(db_session, WaveRequest(length=40, random_seed=1))
+    second = generate_wave(db_session, WaveRequest(length=40, random_seed=2))
+
+    overlap = {item.video_id for item in first.items} & {item.video_id for item in second.items}
+    assert len(overlap) / len(second.items) <= 0.30
+    assert second.overlap_previous_percent <= 30
+
+
+def test_the_same_seed_still_yields_a_different_wave_next_time(db_session) -> None:
+    """Even an unchanged pool and an unchanged seed must not repeat a wave."""
+    build_pool(db_session, liked_count=10, discovery_count=90)
+
+    first = generate_wave(db_session, WaveRequest(length=40, random_seed=99))
+    second = generate_wave(db_session, WaveRequest(length=40, random_seed=99))
+
+    assert [item.video_id for item in first.items] != [item.video_id for item in second.items]
+
+
+def test_sampling_alone_varies_the_order(db_session) -> None:
+    """Stochastic selection, not just exclusion, drives the variation."""
+    import random as _random
+
+    from app.recommender.reranker import RerankCandidate, rerank
+
+    candidates = [
+        RerankCandidate(
+            video_id=f"v{index}",
+            score=1.0 - index * 0.005,
+            artist_id=f"a{index}",
+            album_id=None,
+            seed_video_id="seed",
+            source_type="RADIO",
+            familiar=False,
+            quality_expected=0.5,
+            proven_playable=True,
+        )
+        for index in range(60)
+    ]
+    first = [item.video_id for item in rerank(candidates, 20, 0, rng=_random.Random(1)).items]
+    second = [item.video_id for item in rerank(candidates, 20, 0, rng=_random.Random(2)).items]
+    assert first != second
+    assert [item.video_id for item in rerank(candidates, 20, 0).items] == [
+        item.video_id for item in rerank(candidates, 20, 0).items
+    ]
 
 
 def test_one_artist_cannot_dominate_a_window_of_five(db_session) -> None:

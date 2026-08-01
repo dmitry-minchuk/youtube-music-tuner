@@ -4,10 +4,21 @@ Artist window rules live here and nowhere else — hard filters only decide
 whether a single track is admissible at all. When the constraints would make
 the queue shorter than requested they are relaxed in a fixed, deterministic
 order, and every relaxation is reported as a reason code.
+
+Selection is greedy over a window, in the spirit of the determinantal point
+process re-rankers used for feed diversity: each pick is judged against the
+last few chosen tracks rather than the whole prefix. It is also *stochastic* —
+the next track is sampled from the top of the ranking instead of always
+taking the argmax. Without that, an unchanged pool would reproduce exactly
+the same wave every time, which is the single loudest source of repetition.
+Sampling is seeded, so a generation remains reproducible from its stored
+``random_seed``.
 """
 
 from __future__ import annotations
 
+import math
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
@@ -28,6 +39,16 @@ SAME_ALBUM_PENALTY = 0.15
 RECENT_TRACK_PENALTY = 0.25
 SOURCE_CONCENTRATION_PENALTY = 0.20
 QUOTA_BONUS = 0.30
+
+# Comparison window for the diversity penalties. Eight sits inside the six to
+# twelve range that windowed DPP re-rankers use in production feeds.
+DIVERSITY_WINDOW = 8
+
+# Stochastic selection: sample from this many leading candidates, with a
+# softness that grows with temperature.
+SELECTION_TOP_K = 12
+SELECTION_TAU_MIN = 0.05
+SELECTION_TAU_MAX = 0.22
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +134,7 @@ def _adjusted_score(
     familiar_needed: bool,
 ) -> float:
     score = candidate.score
-    recent = chosen[-5:]
+    recent = chosen[-DIVERSITY_WINDOW:]
     if candidate.artist_id is not None and any(
         item.artist_id == candidate.artist_id for item in recent
     ):
@@ -135,17 +156,53 @@ def _adjusted_score(
     return score
 
 
+def selection_temperature(temperature: int) -> float:
+    """Softness of the sampling distribution, driven by the wave temperature."""
+    position = max(0, min(100, temperature)) / 100
+    return SELECTION_TAU_MIN + position * (SELECTION_TAU_MAX - SELECTION_TAU_MIN)
+
+
+def _pick(
+    scored: list[tuple[float, RerankCandidate]],
+    rng: random.Random | None,
+    tau: float,
+) -> RerankCandidate:
+    """Take the best candidate, or sample near the top when an rng is given."""
+    scored.sort(key=lambda pair: (-pair[0], pair[1].video_id))
+    if rng is None or len(scored) == 1:
+        return scored[0][1]
+
+    top = scored[:SELECTION_TOP_K]
+    leader = top[0][0]
+    weights = [math.exp(min(0.0, (value - leader)) / tau) for value, _ in top]
+    total = sum(weights)
+    if total <= 0.0:
+        return top[0][1]
+
+    threshold = rng.random() * total
+    cumulative = 0.0
+    for weight, (_, candidate) in zip(weights, top, strict=True):
+        cumulative += weight
+        if threshold <= cumulative:
+            return candidate
+    return top[-1][1]
+
+
 def rerank(
     candidates: Sequence[RerankCandidate],
     length: int,
     familiar_target: int,
+    *,
+    rng: random.Random | None = None,
+    temperature: int = 50,
 ) -> RerankResult:
-    """Greedy selection honouring diversity limits and the familiar quota."""
+    """Windowed selection honouring diversity limits and the familiar quota."""
     result = RerankResult()
     remaining = list(candidates)
     chosen: list[RerankCandidate] = []
     familiar_count = 0
     ladder_index = 0
+    tau = selection_temperature(temperature)
 
     while len(chosen) < length and remaining:
         limits = RELAXATION_LADDER[ladder_index]
@@ -161,7 +218,8 @@ def rerank(
                 continue
             break
 
-        best = max(allowed, key=lambda item: _adjusted_score(item, chosen, familiar_needed))
+        scored = [(_adjusted_score(item, chosen, familiar_needed), item) for item in allowed]
+        best = _pick(scored, rng, tau)
         remaining.remove(best)
         chosen.append(best)
         if best.familiar:

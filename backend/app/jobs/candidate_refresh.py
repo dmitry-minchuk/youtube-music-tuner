@@ -21,16 +21,16 @@ from app.integrations.youtube_music.port import MusicCatalogPort
 from app.persistence import repositories as repo
 from app.persistence.models import (
     CandidateEdge,
-    LibraryTrackState,
     PlaybackSession,
     TrackAffinity,
     TrackArtist,
     utcnow,
 )
+from app.recommender.graph import positive_roots
 
 logger = logging.getLogger(__name__)
 
-MAX_SEEDS_PER_RUN = 5
+MAX_SEEDS_PER_RUN = 6
 MAX_SEEDS_PER_ARTIST = 2
 EDGE_TTL = dt.timedelta(days=7)
 RADIO_LIMIT = 25
@@ -57,25 +57,25 @@ def _artist_of(db: Session, video_ids: list[str]) -> dict[str, str]:
 
 
 def select_seeds(db: Session, now: dt.datetime, rng: random.Random) -> list[str]:
-    """Two long-unplayed favourites, one fresh discovery, one random positive."""
-    liked = list(
-        db.scalars(
-            select(LibraryTrackState.video_id).where(LibraryTrackState.is_liked.is_(True))
-        ).all()
-    )
-    if not liked:
+    """Two long-unplayed favourites, two fresh discoveries, two random positives.
+
+    Seeds are not limited to likes: a track that earned a strong reward is
+    just as good a place to explore from, and there are far more of those.
+    """
+    positives = sorted(positive_roots(db))
+    if not positives:
         return []
 
     affinity = {
         row.video_id: row
-        for row in db.scalars(select(TrackAffinity).where(TrackAffinity.video_id.in_(liked)))
+        for row in db.scalars(select(TrackAffinity).where(TrackAffinity.video_id.in_(positives)))
     }
 
     def last_played(video_id: str) -> dt.datetime:
         row = affinity.get(video_id)
         return row.last_played_at if row and row.last_played_at else dt.datetime.min
 
-    long_unplayed = sorted(liked, key=last_played)[:2]
+    long_unplayed = sorted(positives, key=lambda video: (last_played(video), video))[:2]
 
     fresh_discovery = list(
         db.scalars(
@@ -86,12 +86,12 @@ def select_seeds(db: Session, now: dt.datetime, rng: random.Random) -> list[str]
                 PlaybackSession.started_at >= now - dt.timedelta(days=7),
             )
             .order_by(PlaybackSession.started_at.desc())
-            .limit(1)
+            .limit(2)
         ).all()
     )
 
-    remaining = [video for video in liked if video not in long_unplayed]
-    random_positive = [rng.choice(remaining)] if remaining else []
+    remaining = sorted(set(positives) - set(long_unplayed) - set(fresh_discovery))
+    random_positive = rng.sample(remaining, k=min(2, len(remaining))) if remaining else []
 
     ordered: list[str] = []
     for video_id in [*long_unplayed, *fresh_discovery, *random_positive]:
@@ -124,12 +124,16 @@ def _has_fresh_edges(db: Session, seed: str, source: CandidateSource, now: dt.da
     return existing is not None
 
 
-def _store_edges(db: Session, seed: str, candidates: list, now: dt.datetime) -> int:
+def store_edges(
+    db: Session, seed: str, candidates: list, now: dt.datetime, *, hop: int = 1
+) -> int:
+    """Write the edges a fetch produced. Existing edges are refreshed, never
+    duplicated, and an edge is only ever moved closer to the roots."""
     written = 0
     expires_at = now + EDGE_TTL
     for candidate in candidates:
         track = candidate.track
-        if track.video_id is None:
+        if track.video_id is None or track.video_id == seed:
             continue
         repo.upsert_track(db, track)
         existing = db.scalar(
@@ -144,6 +148,7 @@ def _store_edges(db: Session, seed: str, candidates: list, now: dt.datetime) -> 
             existing.rank = candidate.rank
             existing.fetched_at = now
             existing.expires_at = expires_at
+            existing.hop = min(existing.hop, hop)
             continue
         db.add(
             CandidateEdge(
@@ -154,6 +159,7 @@ def _store_edges(db: Session, seed: str, candidates: list, now: dt.datetime) -> 
                 rank=candidate.rank,
                 fetched_at=now,
                 expires_at=expires_at,
+                hop=hop,
             )
         )
         written += 1
@@ -192,7 +198,8 @@ def run_candidate_refresh(
                 )
                 continue
             calls += 1
-            written += _store_edges(db, seed, candidates, now)
+            # Seeds are positive roots, so their neighbours sit one hop out.
+            written += store_edges(db, seed, candidates, now, hop=1)
 
     db.flush()
     logger.info(

@@ -231,7 +231,11 @@ class CandidateEdge(Base):
     source_key: Mapped[str] = mapped_column(String(128), default="")
     rank: Mapped[int] = mapped_column(Integer, default=0)
     fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    # Not a lifetime: the edge stays in the graph after this, the timestamp
+    # only says the seed may be queried again (docs/05 section 3).
     expires_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    # Graph distance from a positive root (a like or a strong local signal).
+    hop: Mapped[int] = mapped_column(Integer, default=1)
 
     __table_args__ = (
         UniqueConstraint(
@@ -242,6 +246,8 @@ class CandidateEdge(Base):
             name="uq_candidate_edge",
         ),
         Index("ix_candidate_expires", "expires_at"),
+        Index("ix_candidate_seed", "seed_video_id"),
+        Index("ix_candidate_target", "candidate_video_id"),
     )
 
 
@@ -334,6 +340,10 @@ class QueueGeneration(Base):
     target_familiar_percent: Mapped[int] = mapped_column(Integer, default=0)
     actual_familiar_percent: Mapped[int] = mapped_column(Integer, default=0)
     relaxations_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Observability for the freshness goal: how much of this wave the previous
+    # one already contained, and how much material there was to choose from.
+    overlap_previous_percent: Mapped[int] = mapped_column(Integer, default=0)
+    pool_size: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
 
     __table_args__ = (Index("ix_generation_queue", "queue_id"),)

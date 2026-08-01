@@ -27,6 +27,10 @@ class PeriodicJob:
 SCHEDULE: tuple[PeriodicJob, ...] = (
     PeriodicJob(queue.JOB_LIBRARY_SYNC, "library_sync", SYNC_TTL),
     PeriodicJob(queue.JOB_CANDIDATE_REFRESH, "candidate_refresh", dt.timedelta(days=1)),
+    # The graph grows in small daily steps rather than one burst, so the pool
+    # keeps widening without ever spending the whole call budget at once.
+    PeriodicJob(queue.JOB_GRAPH_EXPAND, "graph_expand", dt.timedelta(hours=6)),
+    PeriodicJob(queue.JOB_AFFINITY_ROLLUP, "affinity_rollup", dt.timedelta(hours=6)),
     PeriodicJob(queue.JOB_MODEL_TRAIN, "model_train", dt.timedelta(hours=1)),
     PeriodicJob(queue.JOB_RETENTION_CLEANUP, "retention_cleanup", dt.timedelta(days=1)),
     PeriodicJob(queue.JOB_DATABASE_BACKUP, "database_backup", dt.timedelta(days=1)),

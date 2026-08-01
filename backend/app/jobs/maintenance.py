@@ -34,7 +34,7 @@ RAW_EVENT_RETENTION_DAYS = 180
 FEATURE_SNAPSHOT_RETENTION_DAYS = 180
 LEDGER_RETENTION_DAYS = 90
 FAILED_JOB_RETENTION_DAYS = 30
-CANDIDATE_EDGE_GRACE_DAYS = 30
+CANDIDATE_EDGE_RETENTION_DAYS = 365
 BACKUP_RETENTION_DAYS = 14
 
 
@@ -153,9 +153,13 @@ def run_retention_cleanup(
         )
     ).rowcount
 
+    # An edge records that YouTube considers two tracks related, which is a
+    # fact about the catalogue rather than a cache entry: it is kept long
+    # after ``expires_at`` says the seed may be queried again. Only edges that
+    # nobody refreshed for a year are dropped.
     edges = db.execute(
         delete(CandidateEdge).where(
-            CandidateEdge.expires_at < now - dt.timedelta(days=CANDIDATE_EDGE_GRACE_DAYS)
+            CandidateEdge.fetched_at < now - dt.timedelta(days=CANDIDATE_EDGE_RETENTION_DAYS)
         )
     ).rowcount
 

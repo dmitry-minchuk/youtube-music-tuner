@@ -22,6 +22,13 @@ CANDIDATE_REFRESH_PER_DAY = 1
 CANDIDATE_SEED_CALLS_PER_RUN = 10
 PUBLISH_WINDOWS_PER_DAY = 1
 
+# Read-only calls that widen the candidate graph. One shared ceiling covers
+# both the daily seed refresh and the frontier expansion runs, so growing the
+# pool can never crowd out publishing (docs/03 section 9).
+DISCOVERY_OPERATIONS = frozenset({"get_watch_playlist", "get_song_related"})
+DISCOVERY_CALLS_PER_DAY = 60
+GRAPH_EXPAND_CALLS_PER_RUN = 8
+
 # Per publish window, per playlist.
 MAX_ITEM_CHANGES_PER_WINDOW = 15
 MAX_MUTATING_REQUESTS_PER_WINDOW = 15
@@ -156,6 +163,17 @@ class CallBudget:
 
     def candidate_refresh_runs_today(self) -> int:
         return self._count(operations=("get_song_related",), since=self._day_ago)
+
+    def discovery_calls_today(self) -> int:
+        return self._count(operations=DISCOVERY_OPERATIONS, since=self._day_ago)
+
+    def remaining_discovery_calls(self) -> int:
+        return max(0, DISCOVERY_CALLS_PER_DAY - self.discovery_calls_today())
+
+    def check_discovery(self) -> None:
+        used = self.discovery_calls_today()
+        if used >= DISCOVERY_CALLS_PER_DAY:
+            raise BudgetExceeded("discovery_calls", DISCOVERY_CALLS_PER_DAY, used)
 
     def playlist_requests_in_window(self, playlist_id: str, window_start: dt.datetime) -> int:
         return self._count(

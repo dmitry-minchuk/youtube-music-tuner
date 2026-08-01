@@ -32,6 +32,7 @@ from app.player.aggregation import (
     fold_event,
     summarize,
 )
+from app.recommender.affinity import refresh_for_track
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,10 @@ def reaggregate_session(db: Session, session_id: str) -> PlaybackSession | None:
     record.aggregated_at = utcnow()
 
     _link_feature_snapshot(db, record)
+    db.flush()
+    # Fold the session into the ranking aggregates right away: a skip must
+    # affect the next track, not tomorrow's batch (docs/05 section 12).
+    refresh_for_track(db, record.video_id)
     db.flush()
     return record
 

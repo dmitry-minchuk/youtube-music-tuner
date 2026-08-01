@@ -26,6 +26,8 @@ JOB_PLAYLIST_PUBLISH = "playlist_publish"
 JOB_RETENTION_CLEANUP = "retention_cleanup"
 JOB_DATABASE_BACKUP = "database_backup"
 JOB_RATING_SYNC = "rating_sync"
+JOB_AFFINITY_ROLLUP = "affinity_rollup"
+JOB_GRAPH_EXPAND = "graph_expand"
 
 
 class JobAlreadyActive(Exception):

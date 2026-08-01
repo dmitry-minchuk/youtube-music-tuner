@@ -120,6 +120,33 @@ def handle_retention_cleanup(
     }
 
 
+def handle_graph_expand(
+    session: Session, _job: Job, catalog: MusicCatalogPort
+) -> dict[str, object]:
+    """Widen the candidate graph a few nodes at a time."""
+    from app.jobs.graph_expand import run_graph_expansion
+
+    result = run_graph_expansion(session, catalog)
+    return {
+        "nodes": list(result.nodes_expanded),
+        "edgesWritten": result.edges_written,
+        "callsMade": result.calls_made,
+        "graphEdges": result.edges_total,
+        "graphCandidates": result.candidates_total,
+    }
+
+
+def handle_affinity_rollup(
+    session: Session, _job: Job, _catalog: MusicCatalogPort
+) -> dict[str, object]:
+    """Local only. Sessions fold into aggregates as they arrive; this pass
+    exists because the rolling windows shrink with time on their own."""
+    from app.recommender.affinity import rebuild_all
+
+    tracks, artists = rebuild_all(session)
+    return {"tracks": tracks, "artists": artists}
+
+
 def handle_database_backup(
     _session: Session, _job: Job, _catalog: MusicCatalogPort
 ) -> dict[str, object]:
@@ -143,6 +170,8 @@ HANDLERS: dict[str, Handler] = {
     queue.JOB_MODEL_TRAIN: handle_model_train,
     queue.JOB_RETENTION_CLEANUP: handle_retention_cleanup,
     queue.JOB_DATABASE_BACKUP: handle_database_backup,
+    queue.JOB_AFFINITY_ROLLUP: handle_affinity_rollup,
+    queue.JOB_GRAPH_EXPAND: handle_graph_expand,
 }
 
 

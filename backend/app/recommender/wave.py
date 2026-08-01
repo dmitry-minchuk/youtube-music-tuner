@@ -1,9 +1,18 @@
 """Wave queue generation (docs/05 sections 3-11).
 
-Opening the Wave never calls YouTube: candidates come from the local pool,
+Opening the Wave never calls YouTube: candidates come from the local graph,
 are filtered, scored by the current serving policy and finally sequenced by
 the diversity reranker. Everything needed to reproduce the queue is stored
 on the generation row.
+
+Freshness is a first-class requirement, not a side effect of ranking. Three
+mechanisms keep consecutive waves from repeating each other:
+
+* the pool is the whole accumulated graph rather than a seven-day window;
+* tracks from recent generations are excluded outright while the pool can
+  afford it, and penalised when it cannot;
+* selection is stochastic, so even an unchanged pool yields a different
+  ordering every time.
 """
 
 from __future__ import annotations
@@ -18,7 +27,6 @@ from sqlalchemy.orm import Session
 
 from app.persistence.models import (
     ArtistAffinity,
-    CandidateEdge,
     FeatureSnapshot,
     LibraryTrackState,
     PlaybackSession,
@@ -30,6 +38,7 @@ from app.persistence.models import (
     utcnow,
 )
 from app.recommender.features import FEATURE_SCHEMA_VERSION, FeatureVector, build_features
+from app.recommender.graph import CandidateSupport, build_support, hop_discount
 from app.recommender.learning_state import Phase, learning_status
 from app.recommender.linucb import LinUcbModel
 from app.recommender.reranker import RerankCandidate, rerank
@@ -45,11 +54,30 @@ from app.recommender.temperature import (
     familiar_target_count,
 )
 
-RECENT_PLAY_EXCLUSION = 30
+# The recency window scales with the pool instead of being a flat 30: with a
+# few hundred candidates a fixed window hides almost nothing.
+RECENT_PLAY_MIN = 30
+RECENT_PLAY_MAX = 400
+RECENT_PLAY_POOL_SHARE = 0.35
+
+# How many past generations are remembered when avoiding repeats, and how
+# hard each one is penalised. Index 0 is the wave just before this one.
+WAVE_HISTORY_DEPTH = 4
+HISTORY_PENALTY: tuple[float, ...] = (0.90, 0.45, 0.22, 0.10)
+
 PLAYBACK_ERROR_COOLDOWN = dt.timedelta(hours=24)
 REDISCOVERY_DAYS = 60
 FATIGUE_WINDOW_DAYS = 7
 STRONG_POSITIVE_REWARD = 0.4
+
+# A track you finished at least once and still feel warm about counts as
+# familiar even without a like — otherwise the familiar quota keeps recycling
+# the same handful of likes.
+WARM_REWARD_FLOOR = 0.15
+
+# Escalating quarantine for tracks you keep skipping (docs/05 section 4).
+SKIP_QUARANTINE_SECOND = dt.timedelta(days=7)
+SKIP_QUARANTINE_THIRD = dt.timedelta(days=30)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,13 +114,31 @@ class WaveResult:
     actual_familiar_percent: int
     relaxations: tuple[str, ...]
     items: tuple[WaveItem, ...]
+    pool_size: int = 0
+    overlap_previous_percent: int = 0
 
 
-def _recently_played(db: Session, limit: int = RECENT_PLAY_EXCLUSION) -> set[str]:
-    rows = db.scalars(
-        select(PlaybackSession.video_id).order_by(PlaybackSession.started_at.desc()).limit(limit)
-    ).all()
-    return set(rows)
+def _recently_played(db: Session, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
+    return list(
+        db.scalars(
+            select(PlaybackSession.video_id)
+            .order_by(PlaybackSession.started_at.desc())
+            .limit(limit)
+        ).all()
+    )
+
+
+def recency_window(pool_size: int) -> int:
+    """How many recently played tracks to hide, given how much material exists.
+
+    A flat thirty was far too small once the graph started growing, so the
+    window follows the pool. It never exceeds half of it: hearing something
+    again is annoying, but an empty wave is worse.
+    """
+    desired = min(RECENT_PLAY_MAX, max(RECENT_PLAY_MIN, int(pool_size * RECENT_PLAY_POOL_SHARE)))
+    return min(desired, pool_size // 2)
 
 
 def _error_cooldown(db: Session, now: dt.datetime) -> set[str]:
@@ -105,6 +151,27 @@ def _error_cooldown(db: Session, now: dt.datetime) -> set[str]:
         )
     ).all()
     return set(rows)
+
+
+def skip_quarantine(db: Session, now: dt.datetime) -> set[str]:
+    """Tracks you have skipped often enough to deserve a rest.
+
+    Two skips buy a week off, three or more a month. A track you have also
+    finished at least once is given more rope: skipping it may just have been
+    the wrong moment.
+    """
+    quarantined: set[str] = set()
+    rows = db.scalars(select(TrackAffinity).where(TrackAffinity.skips > 0))
+    for row in rows:
+        if row.last_skipped_at is None:
+            continue
+        age = now - row.last_skipped_at
+        threshold = row.skips - (1 if row.completions > 0 else 0)
+        if (threshold >= 3 and age < SKIP_QUARANTINE_THIRD) or (
+            threshold == 2 and age < SKIP_QUARANTINE_SECOND
+        ):
+            quarantined.add(row.video_id)
+    return quarantined
 
 
 def _blocked(db: Session) -> set[str]:
@@ -141,6 +208,41 @@ def _strong_positive(db: Session) -> set[str]:
     return set(rows)
 
 
+def _warm(db: Session) -> set[str]:
+    """Finished at least once and still positive on the decayed average."""
+    rows = db.scalars(
+        select(TrackAffinity.video_id).where(
+            TrackAffinity.completions > 0,
+            TrackAffinity.decayed_reward >= WARM_REWARD_FLOOR,
+        )
+    ).all()
+    return set(rows)
+
+
+def recent_generations(db: Session, depth: int = WAVE_HISTORY_DEPTH) -> list[set[str]]:
+    """Video ids of the last few waves, newest first."""
+    generation_ids = list(
+        db.scalars(
+            select(QueueGeneration.generation_id)
+            .order_by(
+                QueueGeneration.created_at.desc(), QueueGeneration.generation_id.desc()
+            )
+            .limit(depth)
+        ).all()
+    )
+    if not generation_ids:
+        return []
+    grouped: dict[str, set[str]] = {generation_id: set() for generation_id in generation_ids}
+    rows = db.execute(
+        select(QueueItem.generation_id, QueueItem.video_id).where(
+            QueueItem.generation_id.in_(generation_ids)
+        )
+    ).all()
+    for generation_id, video_id in rows:
+        grouped[generation_id].add(video_id)
+    return [grouped[generation_id] for generation_id in generation_ids]
+
+
 def _primary_artists(db: Session, video_ids: list[str]) -> dict[str, str]:
     if not video_ids:
         return {}
@@ -169,30 +271,21 @@ def _artist_names(db: Session, video_ids: list[str]) -> dict[str, list[str]]:
     return grouped
 
 
-def _candidate_edges(db: Session, now: dt.datetime) -> dict[str, tuple[str, str, int]]:
-    """video_id -> (source_type, seed_video_id, best rank), freshest first."""
-    rows = db.scalars(
-        select(CandidateEdge).where(CandidateEdge.expires_at > now).order_by(CandidateEdge.rank)
-    ).all()
-    best: dict[str, tuple[str, str, int]] = {}
-    for row in rows:
-        current = best.get(row.candidate_video_id)
-        if current is None or row.rank < current[2]:
-            best[row.candidate_video_id] = (row.source_type, row.seed_video_id, row.rank)
-    return best
-
-
 def _build_features(
     *,
-    video_id: str,
     source_type: str,
     seed_affinity: float,
     artist_affinity: float,
+    support: CandidateSupport | None,
     affinity: TrackAffinity | None,
     temperature: int,
     now: dt.datetime,
 ) -> RuleFeatures:
     strength = SOURCE_STRENGTH.get(source_type, 0.5)
+    if support is not None:
+        # Distance from a track you like matters as much as which endpoint
+        # produced the edge.
+        strength *= hop_discount(support.min_hop)
 
     rediscovery = 0.0
     fatigue = 0.0
@@ -212,6 +305,8 @@ def _build_features(
             skipped_days = (now - affinity.last_skipped_at).days
             if skipped_days <= FATIGUE_WINDOW_DAYS:
                 recent_skip = 0.25
+            # Every skip beyond the first keeps counting even after the week.
+            recent_skip += min(0.25, 0.08 * max(0, affinity.skips - 1))
 
     # High temperature values novelty, low temperature values the familiar.
     novelty_weighted = novelty * (temperature / 100)
@@ -224,6 +319,77 @@ def _build_features(
         novelty=novelty_weighted,
         fatigue_penalty=fatigue,
         recent_skip_penalty=recent_skip,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _Eligibility:
+    ids: set[str]
+    history_index: dict[str, int]
+    relaxations: tuple[str, ...]
+    recency_window: int
+
+
+def _apply_freshness(
+    *,
+    pool: set[str],
+    familiar_pool: set[str],
+    recent: list[str],
+    history: list[set[str]],
+    length: int,
+    familiar_target: int,
+) -> _Eligibility:
+    """Decide what may appear, keeping the wave as fresh as the pool allows.
+
+    Discovery repeats are what grate, so the previous waves are removed from
+    the discovery side first and from the familiar side only while the quota
+    can still be met.
+    """
+    relaxations: list[str] = []
+    recent_set = set(recent)
+
+    # Recency is a hard filter. It cannot starve the wave because the window
+    # is already capped at half the pool.
+    discovery_pool = pool - familiar_pool
+    familiar_available = (pool & familiar_pool) - recent_set
+    discovery_available = discovery_pool - recent_set
+    reachable = len(familiar_available) + len(discovery_available)
+
+    history_index: dict[str, int] = {}
+    for index, generation in enumerate(history):
+        for video_id in generation:
+            history_index.setdefault(video_id, index)
+
+    excluded: set[str] = set()
+    if history:
+        previous = history[0]
+        discovery_target = max(0, length - familiar_target)
+        fresh_discovery = discovery_available - previous
+        if len(fresh_discovery) >= discovery_target:
+            excluded |= previous & discovery_available
+        else:
+            relaxations.append("DISCOVERY_REPEAT_ALLOWED")
+
+        fresh_familiar = familiar_available - previous
+        if len(fresh_familiar) >= familiar_target:
+            excluded |= previous & familiar_available
+        else:
+            relaxations.append("FAMILIAR_REPEAT_ALLOWED")
+
+    eligible = (familiar_available | discovery_available) - excluded
+    # Only undo the exclusion if it actually cost the wave tracks it could
+    # otherwise have had — a small pool is a reason for a short wave, not for
+    # replaying the previous one.
+    if len(eligible) < min(length, reachable):
+        eligible = familiar_available | discovery_available
+        if "DISCOVERY_REPEAT_ALLOWED" not in relaxations:
+            relaxations.append("DISCOVERY_REPEAT_ALLOWED")
+
+    return _Eligibility(
+        ids=eligible,
+        history_index=history_index,
+        relaxations=tuple(dict.fromkeys(relaxations)),
+        recency_window=len(recent_set),
     )
 
 
@@ -247,17 +413,19 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     blocked = _blocked(db)
     liked = _liked(db)
     strong_positive = _strong_positive(db)
+    warm = _warm(db)
     proven = _proven_playable(db)
-    recent = _recently_played(db)
     error_cooldown = _error_cooldown(db, now)
-    edges = _candidate_edges(db, now)
+    quarantined = skip_quarantine(db, now)
+    support_by_id = build_support(db, now=now)
 
-    # Pool: liked tracks plus everything reachable through fresh edges.
-    pool_ids = (liked | strong_positive | set(edges)) - blocked - error_cooldown
+    # The pool is the whole graph: edges are knowledge, not a cache.
+    pool_ids = (liked | strong_positive | warm | set(support_by_id)) - blocked
+    pool_ids -= error_cooldown
+    pool_ids -= quarantined
     pool_ids -= request.exclude_video_ids
-    pool_ids -= recent
 
-    tracks = {
+    playable = {
         row.video_id: row
         for row in db.scalars(
             select(Track).where(
@@ -267,6 +435,22 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             )
         )
     }
+    pool_size = len(playable)
+
+    familiar_pool = (liked | strong_positive | warm) & set(playable)
+    familiar_target = familiar_target_count(request.temperature, request.length)
+    window = recency_window(pool_size)
+    history = recent_generations(db)
+    freshness = _apply_freshness(
+        pool=set(playable),
+        familiar_pool=familiar_pool,
+        recent=_recently_played(db, window),
+        history=history,
+        length=request.length,
+        familiar_target=familiar_target,
+    )
+
+    tracks = {video_id: playable[video_id] for video_id in freshness.ids}
     affinities = {
         row.video_id: row
         for row in db.scalars(select(TrackAffinity).where(TrackAffinity.video_id.in_(tracks)))
@@ -284,39 +468,43 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     candidates: list[RerankCandidate] = []
     feature_vectors: dict[str, FeatureVector] = {}
     for video_id, track in tracks.items():
-        source_type, seed_video_id, rank = edges.get(video_id, ("LIKED", None, 1))
+        support = support_by_id.get(video_id)
+        source_type = support.best_source if support else "LIKED"
+        seed_video_id = support.best_seed if support else None
+        rank = support.best_rank if support else 1
         if video_id in liked:
             source_type = "LIKED"
 
         artist_id = primary_artists.get(video_id)
         artist_row = artist_affinity_rows.get(artist_id) if artist_id else None
         artist_affinity = min(1.0, max(0.0, artist_row.decayed_reward)) if artist_row else 0.0
-        seed_affinity = 1.0 / (1.0 + max(0, rank - 1) * 0.1)
+        # Support from several liked seeds beats a single strong edge.
+        seed_affinity = support.support_score if support else 1.0
 
         features = _build_features(
-            video_id=video_id,
             source_type=source_type,
             seed_affinity=seed_affinity,
             artist_affinity=artist_affinity,
+            support=support,
             affinity=affinities.get(video_id),
             temperature=request.temperature,
             now=now,
         )
         rule_value = rule_score(features)
         affinity_row = affinities.get(video_id)
-        artist_row_for_features = artist_affinity_rows.get(artist_id) if artist_id else None
+        seed_support = 0
+        if support is not None:
+            seed_support = support.positive_seeds or support.distinct_seeds
         vector = build_features(
             is_liked=video_id in liked,
-            artist_decayed_reward=(
-                artist_row_for_features.decayed_reward if artist_row_for_features else 0.0
-            ),
+            artist_decayed_reward=(artist_row.decayed_reward if artist_row else 0.0),
             seed_mean_reward=affinity_row.decayed_reward if affinity_row else 0.0,
-            distinct_seed_count=1,
+            distinct_seed_count=seed_support,
             best_source_rank=rank,
             plays_all=affinity_row.plays_all if affinity_row else 0,
             last_played_at=affinity_row.last_played_at if affinity_row else None,
             plays_7d=affinity_row.plays_7d if affinity_row else 0,
-            artist_plays_7d=(artist_row_for_features.plays_7d if artist_row_for_features else 0),
+            artist_plays_7d=(artist_row.plays_7d if artist_row else 0),
             skipped_recently=bool(affinity_row and affinity_row.last_skipped_at is not None),
             temperature=request.temperature,
             recent_session_reward=recent_reward,
@@ -334,23 +522,25 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             score = rule_value
             quality = rule_to_quality_expected(rule_value)
 
-        familiar = video_id in liked or video_id in strong_positive
+        # Anything a recent wave already offered starts from further back.
+        history_position = freshness.history_index.get(video_id)
+        if history_position is not None and history_position < len(HISTORY_PENALTY):
+            score -= HISTORY_PENALTY[history_position]
+
+        familiar = video_id in familiar_pool
         reasons = _reason_codes(
             familiar=familiar,
             liked=video_id in liked,
             source_type=source_type,
+            support=support,
             affinity=affinities.get(video_id),
             now=now,
         )
 
-        # A small deterministic jitter keeps equal scores from always tying
-        # the same way while staying reproducible for a fixed seed.
-        jitter = rng.uniform(0.0, 0.01) * exploration_alpha(request.temperature)
-
         candidates.append(
             RerankCandidate(
                 video_id=video_id,
-                score=score + jitter,
+                score=score,
                 artist_id=artist_id,
                 album_id=track.album_id,
                 seed_video_id=seed_video_id,
@@ -362,11 +552,16 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             )
         )
 
-    candidates.sort(key=lambda item: item.score, reverse=True)
-    familiar_target = familiar_target_count(request.temperature, request.length)
-    reranked = rerank(candidates, request.length, familiar_target)
+    candidates.sort(key=lambda item: (-item.score, item.video_id))
+    reranked = rerank(
+        candidates,
+        request.length,
+        familiar_target,
+        rng=rng,
+        temperature=request.temperature,
+    )
 
-    relaxations = list(reranked.relaxations)
+    relaxations = [*freshness.relaxations, *reranked.relaxations]
     available_familiar = sum(1 for item in candidates if item.familiar)
     if reranked.actual_familiar_count < familiar_target and available_familiar < familiar_target:
         relaxations.append("FAMILIAR_POOL_WIDENED")
@@ -375,6 +570,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     generation_id = str(uuid.uuid4())
     actual_percent = (
         round(100 * reranked.actual_familiar_count / len(reranked.items)) if reranked.items else 0
+    )
+    chosen_ids = {item.video_id for item in reranked.items}
+    previous_wave = history[0] if history else set()
+    overlap_percent = (
+        round(100 * len(chosen_ids & previous_wave) / len(chosen_ids)) if chosen_ids else 0
     )
 
     generation = QueueGeneration(
@@ -390,7 +590,9 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         pool_watermark=now,
         target_familiar_percent=familiar_quota(request.temperature),
         actual_familiar_percent=actual_percent,
-        relaxations_json={"codes": relaxations},
+        relaxations_json={"codes": list(dict.fromkeys(relaxations))},
+        overlap_previous_percent=overlap_percent,
+        pool_size=pool_size,
     )
     db.add(generation)
 
@@ -445,8 +647,10 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         phase=status.phase.value,
         target_familiar_percent=familiar_quota(request.temperature),
         actual_familiar_percent=actual_percent,
-        relaxations=tuple(relaxations),
+        relaxations=tuple(dict.fromkeys(relaxations)),
         items=tuple(items),
+        pool_size=pool_size,
+        overlap_previous_percent=overlap_percent,
     )
 
 
@@ -455,6 +659,7 @@ def _reason_codes(
     familiar: bool,
     liked: bool,
     source_type: str,
+    support: CandidateSupport | None,
     affinity: TrackAffinity | None,
     now: dt.datetime,
 ) -> tuple[str, ...]:
@@ -465,7 +670,9 @@ def _reason_codes(
     elif familiar:
         codes.append("STRONG_LOCAL_SIGNAL")
 
-    if source_type == "RELATED":
+    if support is not None and support.positive_seeds >= 2:
+        codes.append("MANY_SEEDS_AGREE")
+    elif source_type == "RELATED":
         codes.append("RELATED_TO_POSITIVE_SEED")
     elif source_type == "RADIO":
         codes.append("RADIO_SOURCE")
