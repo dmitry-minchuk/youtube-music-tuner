@@ -15,6 +15,7 @@ from app.integrations.youtube_music.port import MusicCatalogPort
 from app.jobs import queue
 from app.jobs.candidate_refresh import run_candidate_refresh
 from app.jobs.library_sync import SyncCooldownActive, run_library_sync
+from app.jobs.model_train import run_model_training
 from app.persistence import repositories as repo
 from app.persistence.models import Job, utcnow
 
@@ -88,12 +89,26 @@ def handle_candidate_refresh(
     }
 
 
+def handle_model_train(session: Session, job: Job, _catalog: MusicCatalogPort) -> dict[str, object]:
+    """Training is purely local: it never touches YouTube."""
+    result = run_model_training(session, force=bool(job.payload_json.get("force")))
+    return {
+        "modelId": result.model_id,
+        "status": result.status,
+        "samples": result.samples,
+        "offlineMeanReward": result.offline_mean_reward,
+        "gateFailures": list(result.gate_failures),
+        "skippedReason": result.skipped_reason,
+    }
+
+
 Handler = Callable[[Session, Job, MusicCatalogPort], dict[str, object]]
 
 HANDLERS: dict[str, Handler] = {
     queue.JOB_LIBRARY_SYNC: handle_library_sync,
     queue.JOB_RATING_SYNC: handle_rating_sync,
     queue.JOB_CANDIDATE_REFRESH: handle_candidate_refresh,
+    queue.JOB_MODEL_TRAIN: handle_model_train,
 }
 
 

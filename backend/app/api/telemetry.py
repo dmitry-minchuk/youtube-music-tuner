@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.api import errors
 from app.persistence.database import get_session
-from app.persistence.models import PlaybackSession, TelemetryEvent, utcnow
+from app.persistence.models import FeatureSnapshot, PlaybackSession, TelemetryEvent, utcnow
 from app.player.aggregation import (
     AGGREGATION_VERSION,
     SessionAccumulator,
@@ -134,8 +134,29 @@ def reaggregate_session(db: Session, session_id: str) -> PlaybackSession | None:
     record.source = "TUNER"
     record.aggregation_version = AGGREGATION_VERSION
     record.aggregated_at = utcnow()
+
+    _link_feature_snapshot(db, record)
     db.flush()
     return record
+
+
+def _link_feature_snapshot(db: Session, record: PlaybackSession) -> None:
+    """Bind the vector used at selection time to the session it produced.
+
+    The model must learn from the features as they were when the track was
+    chosen, not from values recomputed later (docs/07 section 4).
+    """
+    if record.generation_id is None:
+        return
+    snapshot = db.scalar(
+        select(FeatureSnapshot).where(
+            FeatureSnapshot.generation_id == record.generation_id,
+            FeatureSnapshot.video_id == record.video_id,
+        )
+    )
+    if snapshot is not None and snapshot.session_id is None:
+        snapshot.session_id = record.session_id
+        snapshot.consumed_at = utcnow()
 
 
 @router.post("/telemetry/events:batch")

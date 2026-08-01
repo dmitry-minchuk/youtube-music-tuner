@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.persistence.models import (
     ArtistAffinity,
     CandidateEdge,
+    FeatureSnapshot,
     LibraryTrackState,
     PlaybackSession,
     QueueGeneration,
@@ -28,9 +29,11 @@ from app.persistence.models import (
     TrackArtist,
     utcnow,
 )
+from app.recommender.features import FEATURE_SCHEMA_VERSION, FeatureVector, build_features
+from app.recommender.learning_state import Phase, learning_status
+from app.recommender.linucb import LinUcbModel
 from app.recommender.reranker import RerankCandidate, rerank
 from app.recommender.rules import (
-    RULE_POLICY_VERSION,
     SOURCE_STRENGTH,
     RuleFeatures,
     rule_score,
@@ -217,9 +220,21 @@ def _build_features(
 
 
 def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
+    from app.jobs.model_train import load_active_model
+
     now = utcnow()
     seed = request.random_seed if request.random_seed is not None else random.randrange(2**31)
     rng = random.Random(seed)
+
+    status = learning_status(db)
+    serving_model: LinUcbModel | None = None
+    serving_model_id: str | None = None
+    if status.phase is Phase.ACTIVE:
+        loaded = load_active_model(db)
+        if loaded is not None:
+            serving_model_id, serving_model = loaded
+    alpha = exploration_alpha(request.temperature)
+    recent_reward = _recent_mean_reward(db)
 
     blocked = _blocked(db)
     liked = _liked(db)
@@ -258,6 +273,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     }
 
     candidates: list[RerankCandidate] = []
+    feature_vectors: dict[str, FeatureVector] = {}
     for video_id, track in tracks.items():
         source_type, seed_video_id, rank = edges.get(video_id, ("LIKED", None, 1))
         if video_id in liked:
@@ -277,8 +293,37 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             temperature=request.temperature,
             now=now,
         )
-        score = rule_score(features)
-        quality = rule_to_quality_expected(score)
+        rule_value = rule_score(features)
+        affinity_row = affinities.get(video_id)
+        artist_row_for_features = artist_affinity_rows.get(artist_id) if artist_id else None
+        vector = build_features(
+            is_liked=video_id in liked,
+            artist_decayed_reward=(
+                artist_row_for_features.decayed_reward if artist_row_for_features else 0.0
+            ),
+            seed_mean_reward=affinity_row.decayed_reward if affinity_row else 0.0,
+            distinct_seed_count=1,
+            best_source_rank=rank,
+            plays_all=affinity_row.plays_all if affinity_row else 0,
+            last_played_at=affinity_row.last_played_at if affinity_row else None,
+            plays_7d=affinity_row.plays_7d if affinity_row else 0,
+            artist_plays_7d=(artist_row_for_features.plays_7d if artist_row_for_features else 0),
+            skipped_recently=bool(affinity_row and affinity_row.last_skipped_at is not None),
+            temperature=request.temperature,
+            recent_session_reward=recent_reward,
+            has_duration=track.metadata_duration_seconds is not None,
+            observation_count=affinity_row.plays_all if affinity_row else 0,
+            now=now,
+        )
+        feature_vectors[video_id] = vector
+
+        if serving_model is not None:
+            x = vector.to_array()
+            quality = serving_model.expected(x)
+            score = serving_model.ucb_score(x, alpha)
+        else:
+            score = rule_value
+            quality = rule_to_quality_expected(rule_value)
 
         familiar = video_id in liked or video_id in strong_positive
         reasons = _reason_codes(
@@ -327,10 +372,10 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         queue_id=queue_id,
         temperature=request.temperature,
         mood=request.mood,
-        serving_policy=RULE_POLICY_VERSION,
-        serving_model_id=None,
-        shadow_model_id=None,
-        quality_score_source="RULE_MAPPED",
+        serving_policy=status.serving_policy,
+        serving_model_id=serving_model_id,
+        shadow_model_id=status.shadow_model_id,
+        quality_score_source=("LINUCB_EXPECTED" if serving_model is not None else "RULE_MAPPED"),
         random_seed=seed,
         pool_watermark=now,
         target_familiar_percent=familiar_quota(request.temperature),
@@ -354,6 +399,17 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
                 reason_codes_json={"codes": list(item.reason_codes)},
             )
         )
+        selected_vector = feature_vectors.get(item.video_id)
+        if selected_vector is not None:
+            db.add(
+                FeatureSnapshot(
+                    generation_id=generation_id,
+                    video_id=item.video_id,
+                    feature_schema_version=FEATURE_SCHEMA_VERSION,
+                    features_json=selected_vector.to_dict(),
+                    created_at=now,
+                )
+            )
         track = tracks[item.video_id]
         items.append(
             WaveItem(
@@ -372,11 +428,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     return WaveResult(
         queue_id=queue_id,
         generation_id=generation_id,
-        serving_policy=RULE_POLICY_VERSION,
-        serving_model_id=None,
-        shadow_model_id=None,
-        quality_score_source="RULE_MAPPED",
-        phase="BASELINE",
+        serving_policy=status.serving_policy,
+        serving_model_id=serving_model_id,
+        shadow_model_id=status.shadow_model_id,
+        quality_score_source=("LINUCB_EXPECTED" if serving_model is not None else "RULE_MAPPED"),
+        phase=status.phase.value,
         target_familiar_percent=familiar_quota(request.temperature),
         actual_familiar_percent=actual_percent,
         relaxations=tuple(relaxations),
@@ -423,3 +479,15 @@ def queue_count(db: Session, queue_id: str) -> int:
         db.scalar(select(func.count()).select_from(QueueItem).where(QueueItem.queue_id == queue_id))
         or 0
     )
+
+
+def _recent_mean_reward(db: Session, limit: int = 5) -> float:
+    """Mean reward of the last few qualified sessions (context feature)."""
+    rows = db.scalars(
+        select(PlaybackSession.reward)
+        .where(PlaybackSession.qualified.is_(True), PlaybackSession.reward.is_not(None))
+        .order_by(PlaybackSession.started_at.desc())
+        .limit(limit)
+    ).all()
+    rewards = [float(value) for value in rows if value is not None]
+    return sum(rewards) / len(rewards) if rewards else 0.0
