@@ -55,87 +55,89 @@ export function PlayerBar(): React.JSX.Element | null {
         <span className={styles.artist}>{track.artists.join(", ")}</span>
       </div>
 
-      <div className={styles.centre}>
-        <div className={styles.controls}>
-          <button
-            type="button"
-            onClick={() => void store.previous()}
-            aria-label="Previous track"
-            disabled={!ready}
-          >
-            <Icon name="previous" />
-          </button>
-          <button
-            type="button"
-            className={styles.primary}
-            onClick={() => store.togglePlay()}
-            aria-label={isPlaying ? "Pause" : "Play"}
-            disabled={!ready}
-            title={ready ? undefined : "Player is still loading"}
-          >
-            {buffering ? "…" : <Icon name={isPlaying ? "pause" : "play"} />}
-          </button>
-          <button
-            type="button"
-            onClick={() => void store.next()}
-            aria-label="Next track"
-            disabled={!ready}
-          >
-            <Icon name="next" />
-          </button>
-        </div>
-
-        <div className={styles.progress}>
-          <span className={styles.time}>{formatDuration(Math.floor(position))}</span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(1, Math.floor(duration ?? 0))}
-            value={Math.floor(position)}
-            onChange={(event) => store.seekTo(Number(event.target.value))}
-            aria-label="Seek"
-            aria-valuetext={`${formatDuration(Math.floor(position))} of ${formatDuration(
-              duration === null ? null : Math.floor(duration),
-            )}`}
-          />
-          <span className={styles.time}>
-            {formatDuration(duration === null ? null : Math.floor(duration))}
-          </span>
-        </div>
+      <div className={styles.controls}>
+        <button
+          type="button"
+          onClick={() => void store.previous()}
+          aria-label="Previous track"
+          disabled={!ready}
+        >
+          <Icon name="previous" />
+        </button>
+        <button
+          type="button"
+          className={styles.primary}
+          onClick={() => store.togglePlay()}
+          aria-label={isPlaying ? "Pause" : "Play"}
+          disabled={!ready}
+          title={ready ? undefined : "Player is still loading"}
+        >
+          {buffering ? (
+            <span className={styles.buffering}>…</span>
+          ) : (
+            <Icon name={isPlaying ? "pause" : "play"} />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => void store.next()}
+          aria-label="Next track"
+          disabled={!ready}
+        >
+          <Icon name="next" />
+        </button>
       </div>
 
-      <div className={styles.right}>
-        <div className={styles.ratings}>
-          <button
-            type="button"
-            className={liked ? `${styles.rateButton} ${styles.liked}` : styles.rateButton}
-            onClick={() => rate("LIKE")}
-            aria-pressed={liked}
-            aria-label={liked ? "Remove like" : "Like this track"}
+      <div className={styles.ratings}>
+        <button
+          type="button"
+          className={liked ? `${styles.rateButton} ${styles.liked}` : styles.rateButton}
+          onClick={() => rate("LIKE")}
+          aria-pressed={liked}
+          aria-label={liked ? "Remove like" : "Like this track"}
+        >
+          <Icon name="heart" size={17} />
+          Like
+        </button>
+        <button
+          type="button"
+          className={disliked ? `${styles.rateButton} ${styles.disliked}` : styles.rateButton}
+          onClick={() => rate("DISLIKE")}
+          aria-pressed={disliked}
+          aria-label={disliked ? "Remove dislike" : "Dislike this track"}
+        >
+          <Icon name="dislike" size={17} />
+          Dislike
+        </button>
+        {(liked || disliked) && syncStatus && (
+          <span
+            className={syncStatus === "FAILED" ? styles.syncFailed : styles.sync}
+            role="status"
           >
-            <Icon name="heart" size={17} />
-            Like
-          </button>
-          <button
-            type="button"
-            className={disliked ? `${styles.rateButton} ${styles.disliked}` : styles.rateButton}
-            onClick={() => rate("DISLIKE")}
-            aria-pressed={disliked}
-            aria-label={disliked ? "Remove dislike" : "Dislike this track"}
-          >
-            <Icon name="dislike" size={17} />
-            Dislike
-          </button>
-          {(liked || disliked) && syncStatus && (
-            <span
-              className={syncStatus === "FAILED" ? styles.syncFailed : styles.sync}
-              role="status"
-            >
-              {SYNC_LABEL[syncStatus]}
-            </span>
-          )}
-        </div>
+            {SYNC_LABEL[syncStatus]}
+          </span>
+        )}
+      </div>
 
+      <div className={styles.progress}>
+        <span className={styles.time}>{formatDuration(Math.floor(position))}</span>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(1, Math.floor(duration ?? 0))}
+          value={Math.floor(position)}
+          onChange={(event) => store.seekTo(Number(event.target.value))}
+          aria-label="Seek"
+          aria-valuetext={`${formatDuration(Math.floor(position))} of ${formatDuration(
+            duration === null ? null : Math.floor(duration),
+          )}`}
+        />
+        <span className={styles.time}>
+          {formatDuration(duration === null ? null : Math.floor(duration))}
+        </span>
+      </div>
+
+      <div className={styles.utility}>
         <label className={styles.volume} title={`Volume ${volume}%`}>
           <span className="visually-hidden">Volume</span>
           <Icon name="volume" size={17} />

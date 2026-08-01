@@ -19,7 +19,7 @@
 }
 
 .tabs button {
-  min-height: 38px;
+  min-height: var(--hit-target);
   border-color: transparent;
   background: transparent;
   box-shadow: none;

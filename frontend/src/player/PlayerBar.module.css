@@ -1,12 +1,17 @@
-/* Three zones so the transport sits in the middle of the bar regardless of
-   how long the track title is: [track] [transport + progress] [ratings]. */
+/* One shared grid keeps both player rows on the same tracks:
+   [track] [transport] [ratings]
+   [track] [progress]  [volume/status]. */
 .bar {
   position: relative;
   z-index: 10;
   display: grid;
   align-items: center;
-  gap: var(--space-4);
-  grid-template-columns: minmax(120px, 1fr) minmax(320px, 2fr) minmax(120px, 1fr);
+  gap: var(--space-2) var(--space-4);
+  grid-template-areas:
+    "info controls ratings"
+    "info progress utility";
+  grid-template-columns: minmax(160px, 1fr) minmax(300px, 1.5fr) minmax(240px, 1fr);
+  grid-template-rows: 40px 40px;
   padding: 10px clamp(16px, 2.5vw, 36px) 12px;
   border-top: 1px solid var(--border-soft);
   background: rgba(15, 19, 25, 0.92);
@@ -14,30 +19,12 @@
   backdrop-filter: blur(24px);
 }
 
-/* Transport above the progress bar, both centred — with them side by side
-   the play button drifts off-centre as the progress bar takes the space. */
-.centre {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-}
-
-.right {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3);
-}
-
 .info {
   display: grid;
   min-width: 0;
   align-items: center;
   column-gap: var(--space-3);
+  grid-area: info;
   grid-template-columns: 44px minmax(0, 1fr);
   grid-template-rows: auto auto;
 }
@@ -78,13 +65,27 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  grid-area: controls;
+  justify-self: center;
 }
 
 .controls button {
-  min-width: var(--hit-target);
-  min-height: var(--hit-target);
+  display: inline-grid;
+  width: var(--hit-target);
+  height: var(--hit-target);
+  padding: 0;
+  place-items: center;
   border-radius: 999px;
   color: var(--text-secondary);
+  line-height: 0;
+}
+
+.controls svg {
+  display: block;
+}
+
+.buffering {
+  line-height: 1;
 }
 
 .controls button:hover:not(:disabled) {
@@ -110,9 +111,10 @@
 .progress {
   display: flex;
   width: 100%;
-  min-width: 260px;
+  min-width: 0;
   align-items: center;
   gap: var(--space-2);
+  grid-area: progress;
 }
 
 .progress input {
@@ -129,6 +131,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  grid-area: ratings;
+  justify-self: end;
   white-space: nowrap;
 }
 
@@ -205,8 +209,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+.utility {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  grid-area: utility;
+}
+
 .pending {
-  justify-self: end;
   min-width: 68px;
   color: var(--text-muted);
   font-size: 0.75rem;
@@ -214,16 +226,11 @@
   white-space: nowrap;
 }
 
-/* Narrow windows: drop to two tidy rows instead of overlapping columns. */
+/* The compact sidebar leaves enough room for the same two aligned rows. */
 @media (max-width: 1180px) {
   .bar {
-    grid-template-columns: minmax(160px, 1fr) minmax(300px, 1.5fr) minmax(270px, 1fr);
-    row-gap: var(--space-3);
+    grid-template-columns: minmax(160px, 1fr) minmax(300px, 1.35fr) minmax(240px, 1fr);
     padding: var(--space-3) var(--space-4);
-  }
-
-  .progress {
-    min-width: 200px;
   }
 
   .pending {
@@ -231,19 +238,28 @@
   }
 }
 
-@media (max-width: 960px) {
+/* Below the three-column minimum, keep every group on an explicit row.
+   Nothing wraps implicitly, so conditional sync text cannot move controls. */
+@media (max-width: 840px) {
   .bar {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--space-3) var(--space-4);
+    gap: var(--space-2) var(--space-4);
+    grid-template-areas:
+      "info info"
+      "controls controls"
+      "progress utility";
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 44px 40px 40px;
   }
 
-  .centre {
-    order: 3;
+  .ratings {
+    grid-area: auto;
     grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
   }
 
-  .right {
-    flex-wrap: wrap;
+  .utility {
+    justify-self: end;
   }
 
   .volume input {
@@ -251,18 +267,27 @@
   }
 }
 
-@media (max-width: 700px) {
-  .right {
-    justify-content: flex-start;
+@media (max-width: 660px) {
+  .bar {
+    grid-template-areas:
+      "info info"
+      "ratings ratings"
+      "controls controls"
+      "progress utility";
+    grid-template-rows: 44px 40px 40px 40px;
   }
 
+  .ratings {
+    grid-area: ratings;
+  }
+}
+
+@media (max-width: 700px) {
   .rateButton {
     padding: 0 var(--space-2);
   }
 
-  .volumeValue,
-  .sync,
-  .syncFailed {
+  .volumeValue {
     display: none;
   }
 }
