@@ -27,3 +27,9 @@
 .muted {
   color: var(--text-muted);
 }
+
+.warn {
+  margin-top: var(--space-3);
+  color: var(--warning);
+  font-size: 0.88rem;
+}

@@ -11,9 +11,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import health, system
+from app.api import health, library, system
 from app.api.errors import ApiError, api_error_handler, unhandled_error_handler
 from app.api.security import CspMiddleware, GuardMiddleware, SessionStore
+from app.jobs.scheduler import Scheduler
 from app.logging_config import configure_logging
 from app.settings import Settings, get_settings
 
@@ -32,11 +33,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "application starting",
         extra={"operation": "startup", "port": settings.port},
     )
+
+    scheduler: Scheduler | None = None
+    if app.state.scheduler_enabled:
+        scheduler = Scheduler(settings, getattr(app.state, "catalog_factory", None))
+        await scheduler.start()
+        app.state.scheduler = scheduler
+
     yield
+
+    if scheduler is not None:
+        await scheduler.stop()
     logger.info("application stopping", extra={"operation": "shutdown"})
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, scheduler_enabled: bool = True) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
@@ -50,6 +61,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.sessions = SessionStore()
+    app.state.scheduler_enabled = scheduler_enabled
+    app.state.catalog_factory = None
 
     app.add_middleware(CspMiddleware, settings=settings)
     app.add_middleware(GuardMiddleware, settings=settings, sessions=app.state.sessions)
@@ -59,6 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(system.router)
+    app.include_router(library.router)
 
     _mount_frontend(app)
     return app

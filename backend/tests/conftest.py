@@ -52,11 +52,29 @@ def migrated_data_dir(data_dir: Path) -> Path:
 
 
 @pytest.fixture
-def app(migrated_data_dir: Path):
+def fake_catalog():
+    from tests.fakes import FakeCatalog
+
+    return FakeCatalog()
+
+
+@pytest.fixture
+def app(migrated_data_dir: Path, fake_catalog):
     from app.main import create_app
     from app.settings import get_settings
 
-    return create_app(get_settings())
+    # The scheduler is driven explicitly in tests, never by a background loop.
+    application = create_app(get_settings(), scheduler_enabled=False)
+    application.state.catalog_factory = lambda _recorder: fake_catalog
+    return application
+
+
+@pytest.fixture
+def db_session(migrated_data_dir: Path):
+    from app.persistence.database import session_scope
+
+    with session_scope() as session:
+        yield session
 
 
 @pytest.fixture

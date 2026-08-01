@@ -1,5 +1,8 @@
+import { ApiError } from "@/api/client";
 import { useAuthStatus, useSystemStatus } from "@/api/hooks";
+import { useStartSync, useSyncStatus } from "@/api/library";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
+import { Button } from "@/ui/Button";
 import styles from "@/features/settings/SettingsPage.module.css";
 
 function formatTime(value: string | null): string {
@@ -7,9 +10,27 @@ function formatTime(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function syncErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.code === "LOCAL_BUDGET_EXCEEDED") {
+      const next = error.body.nextAllowedAt;
+      return typeof next === "string"
+        ? `Sync is still within its 6 hour window — next allowed ${formatTime(next)}.`
+        : "Sync budget for today is used up.";
+    }
+    if (error.code === "YTM_AUTH_REQUIRED") return "YouTube Music sync paused — reconnect required.";
+    if (error.code === "CIRCUIT_OPEN") return "External calls are paused after repeated failures.";
+    if (error.code === "JOB_ALREADY_RUNNING") return "A sync is already running.";
+    return error.message;
+  }
+  return "Could not reach the local API.";
+}
+
 export function SettingsPage(): React.JSX.Element {
   const status = useSystemStatus();
   const auth = useAuthStatus();
+  const sync = useSyncStatus();
+  const startSync = useStartSync();
 
   return (
     <>
@@ -46,6 +67,49 @@ export function SettingsPage(): React.JSX.Element {
                 "docker compose exec tuner python -m app.cli auth"
               }
             />
+          )}
+        </Panel>
+
+        <Panel
+          title="Library sync"
+          description="Reads likes, playlists and available history at most every 6 hours"
+          actions={
+            <Button
+              variant="primary"
+              disabled={startSync.isPending || !auth.data?.connected}
+              onClick={() => startSync.mutate()}
+            >
+              {startSync.isPending ? "Queuing…" : "Sync now"}
+            </Button>
+          }
+        >
+          <dl className={styles.definitions}>
+            <div>
+              <dt>Last successful</dt>
+              <dd>{formatTime(sync.data?.lastSuccessfulSyncAt ?? null)}</dd>
+            </div>
+            <div>
+              <dt>Next allowed</dt>
+              <dd>{formatTime(sync.data?.nextAllowedAt ?? null)}</dd>
+            </div>
+            <div>
+              <dt>Cached likes</dt>
+              <dd>{sync.data?.likedCount ?? 0}</dd>
+            </div>
+            <div>
+              <dt>Cached playlists</dt>
+              <dd>{sync.data?.playlistCount ?? 0}</dd>
+            </div>
+          </dl>
+          {startSync.isError && (
+            <p className={styles.warn} role="status">
+              {syncErrorMessage(startSync.error)}
+            </p>
+          )}
+          {sync.data?.activeJob && (
+            <p className={styles.muted} role="status">
+              Sync job {sync.data.activeJob.status.toLowerCase()}…
+            </p>
           )}
         </Panel>
 
