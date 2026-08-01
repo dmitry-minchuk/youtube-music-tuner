@@ -54,54 +54,57 @@ export function PlayerBar(): React.JSX.Element | null {
         <span className={styles.artist}>{track.artists.join(", ")}</span>
       </div>
 
-      <div className={styles.controls}>
-        <button
-          type="button"
-          onClick={() => void store.previous()}
-          aria-label="Previous track"
-          disabled={!ready}
-        >
-          ◀◀
-        </button>
-        <button
-          type="button"
-          className={styles.primary}
-          onClick={() => store.togglePlay()}
-          aria-label={isPlaying ? "Pause" : "Play"}
-          disabled={!ready}
-          title={ready ? undefined : "Player is still loading"}
-        >
-          {buffering ? "…" : isPlaying ? "❙❙" : "▶"}
-        </button>
-        <button
-          type="button"
-          onClick={() => void store.next()}
-          aria-label="Next track"
-          disabled={!ready}
-        >
-          ▶▶
-        </button>
+      <div className={styles.centre}>
+        <div className={styles.controls}>
+          <button
+            type="button"
+            onClick={() => void store.previous()}
+            aria-label="Previous track"
+            disabled={!ready}
+          >
+            ◀◀
+          </button>
+          <button
+            type="button"
+            className={styles.primary}
+            onClick={() => store.togglePlay()}
+            aria-label={isPlaying ? "Pause" : "Play"}
+            disabled={!ready}
+            title={ready ? undefined : "Player is still loading"}
+          >
+            {buffering ? "…" : isPlaying ? "❙❙" : "▶"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void store.next()}
+            aria-label="Next track"
+            disabled={!ready}
+          >
+            ▶▶
+          </button>
+        </div>
+
+        <div className={styles.progress}>
+          <span className={styles.time}>{formatDuration(Math.floor(position))}</span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(1, Math.floor(duration ?? 0))}
+            value={Math.floor(position)}
+            onChange={(event) => store.seekTo(Number(event.target.value))}
+            aria-label="Seek"
+            aria-valuetext={`${formatDuration(Math.floor(position))} of ${formatDuration(
+              duration === null ? null : Math.floor(duration),
+            )}`}
+          />
+          <span className={styles.time}>
+            {formatDuration(duration === null ? null : Math.floor(duration))}
+          </span>
+        </div>
       </div>
 
-      <div className={styles.progress}>
-        <span className={styles.time}>{formatDuration(Math.floor(position))}</span>
-        <input
-          type="range"
-          min={0}
-          max={Math.max(1, Math.floor(duration ?? 0))}
-          value={Math.floor(position)}
-          onChange={(event) => store.seekTo(Number(event.target.value))}
-          aria-label="Seek"
-          aria-valuetext={`${formatDuration(Math.floor(position))} of ${formatDuration(
-            duration === null ? null : Math.floor(duration),
-          )}`}
-        />
-        <span className={styles.time}>
-          {formatDuration(duration === null ? null : Math.floor(duration))}
-        </span>
-      </div>
-
-      <div className={styles.ratings}>
+      <div className={styles.right}>
+        <div className={styles.ratings}>
         <button
           type="button"
           className={liked ? `${styles.rateButton} ${styles.liked}` : styles.rateButton}
@@ -120,34 +123,35 @@ export function PlayerBar(): React.JSX.Element | null {
         >
           {disliked ? "⊗" : "⊘"} Dislike
         </button>
-        {(liked || disliked) && syncStatus && (
-          <span
-            className={syncStatus === "FAILED" ? styles.syncFailed : styles.sync}
-            role="status"
-          >
-            {SYNC_LABEL[syncStatus]}
+          {(liked || disliked) && syncStatus && (
+            <span
+              className={syncStatus === "FAILED" ? styles.syncFailed : styles.sync}
+              role="status"
+            >
+              {SYNC_LABEL[syncStatus]}
+            </span>
+          )}
+        </div>
+
+        <label className={styles.volume} title={`Volume ${volume}%`}>
+          <span className="visually-hidden">Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={volume}
+            onChange={(event) => store.setVolume(Number(event.target.value))}
+            aria-valuetext={`Volume ${volume} percent`}
+          />
+          <span className={styles.volumeValue}>{volume}%</span>
+        </label>
+
+        {pending > 0 && (
+          <span className={styles.pending} title="Events waiting to be delivered">
+            {pending} pending
           </span>
         )}
       </div>
-
-      <label className={styles.volume} title={`Volume ${volume}%`}>
-        <span className="visually-hidden">Volume</span>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={volume}
-          onChange={(event) => store.setVolume(Number(event.target.value))}
-          aria-valuetext={`Volume ${volume} percent`}
-        />
-        <span className={styles.volumeValue}>{volume}%</span>
-      </label>
-
-      {pending > 0 && (
-        <span className={styles.pending} title="Events waiting to be delivered">
-          {pending} pending
-        </span>
-      )}
     </div>
   );
 }

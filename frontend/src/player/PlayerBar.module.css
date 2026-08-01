@@ -1,18 +1,32 @@
+/* Three zones so the transport sits in the middle of the bar regardless of
+   how long the track title is: [track] [transport + progress] [ratings]. */
 .bar {
   display: grid;
   align-items: center;
   gap: var(--space-4);
-  /* info | controls | progress | ratings | volume | pending */
-  grid-template-columns:
-    minmax(140px, 1fr)
-    auto
-    minmax(200px, 1.6fr)
-    auto
-    auto
-    auto;
+  grid-template-columns: minmax(120px, 1fr) minmax(320px, 2fr) minmax(120px, 1fr);
   padding: var(--space-3) var(--space-6);
   border-top: 1px solid var(--border-soft);
   background: var(--graphite-850);
+}
+
+/* Transport above the progress bar, both centred — with them side by side
+   the play button drifts off-centre as the progress bar takes the space. */
+.centre {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }
 
 .info {
@@ -70,9 +84,14 @@
 
 .progress {
   display: flex;
-  min-width: 0;
+  width: 100%;
+  min-width: 260px;
   align-items: center;
   gap: var(--space-2);
+}
+
+.progress input {
+  flex: 1;
 }
 
 .progress input {
@@ -167,34 +186,29 @@
 }
 
 /* Narrow windows: drop to two tidy rows instead of overlapping columns. */
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
   .bar {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "info controls ratings"
-      "progress progress volume";
-    align-items: center;
-    row-gap: var(--space-2);
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    row-gap: var(--space-3);
     padding: var(--space-3) var(--space-4);
   }
 
-  .info {
-    grid-area: info;
-  }
-  .controls {
-    grid-area: controls;
-  }
-  .ratings {
-    grid-area: ratings;
-  }
   .progress {
-    grid-area: progress;
+    min-width: 200px;
   }
-  .volume {
-    grid-area: volume;
-    justify-self: end;
-  }
+
   .pending {
     display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .bar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .centre {
+    order: 3;
+    grid-column: 1 / -1;
   }
 }
