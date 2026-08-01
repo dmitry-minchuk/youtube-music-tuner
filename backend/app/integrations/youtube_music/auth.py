@@ -108,17 +108,20 @@ def parse_browser_headers(raw: str) -> dict[str, str]:
     return headers
 
 
-def ensure_authorization_header(headers: dict[str, str]) -> dict[str, str]:
-    """Add the SAPISIDHASH authorization header when only cookies were pasted.
+def complete_browser_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Fill in what a copy-paste usually loses.
 
     ytmusicapi classifies a header set as browser auth only if it carries an
     ``authorization`` value containing ``SAPISIDHASH``; without it the file is
-    mistaken for an OAuth token. Browsers do send that header, but it is easy
-    to lose when copying, so derive it from the cookie. The value is
-    recomputed by ytmusicapi on every request, so a stale timestamp here is
-    harmless.
+    mistaken for an OAuth token. It also insists on ``x-goog-authuser``.
+    Browsers send both, but they are easy to miss when copying, so derive the
+    authorization from the cookie and default the account index to the primary
+    one. ytmusicapi recomputes the authorization on every request, so a stale
+    timestamp here is harmless.
     """
     enriched = dict(headers)
+    # 0 is the signed-in primary account; multi-account users copy their own.
+    enriched.setdefault("x-goog-authuser", "0")
     existing = enriched.get("authorization", "")
     if "SAPISIDHASH" in existing:
         return enriched

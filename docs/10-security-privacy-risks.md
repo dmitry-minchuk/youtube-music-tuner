@@ -11,7 +11,8 @@
 | Данные | Место | Защита |
 | --- | --- | --- |
 | OAuth refresh/access token | `/data/secrets/oauth.json` | `0600`, не в Git/логах/backup без явной защиты |
-| Google client secret | `/data/secrets/client.json` | `0600`, импорт CLI внутрь named volume, не env |
+| Google client secret | `/data/secrets/client.json` | `0600`, импорт только через CLI, не env, не UI |
+| Browser cookies YouTube Music | `/data/secrets/browser.json` | `0600`, импорт через UI-форму или CLI, редактируются в логах, удаляются по disconnect |
 | История/телеметрия | SQLite | loopback-only app, local retention/delete |
 | Playlist IDs/video IDs | SQLite | считаются персональными metadata, не публикуются |
 | Database backups | `/data/backups` | локальные права, checksum, retention |
@@ -24,6 +25,7 @@
 - CORS выключен;
 - middleware до routing принимает только `Host` из `127.0.0.1`, `localhost`, `[::1]` с configured port, блокируя DNS rebinding уже в MVP;
 - mutation проверяет exact `Origin`, HttpOnly `SameSite=Strict` local session cookie и связанный `X-CSRF-Token`;
+- форма подключения в Settings принимает browser cookies и защищена теми же guard-ами; значение не возвращается в ответ, не логируется и хранится файлом `0600`. Google client secret через UI по-прежнему не принимается (docs/03 section 2);
 - CSP разрешает собственные resources и необходимые `script-src`/`frame-src` домены YouTube IFrame, без `unsafe-eval`;
 - iframe получает минимальные необходимые permissions;
 - API не принимает произвольный URL для fetch, только opaque IDs;

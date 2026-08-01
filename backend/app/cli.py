@@ -16,7 +16,7 @@ from pathlib import Path
 
 from app.integrations.youtube_music.auth import (
     SECRET_FILE_MODE,
-    ensure_authorization_header,
+    complete_browser_headers,
     ensure_secrets_dir,
     normalize_client_payload,
     parse_browser_headers,
@@ -63,7 +63,7 @@ def cmd_browser_import(args: argparse.Namespace, settings: Settings) -> int:
     raw_text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
 
     try:
-        headers = ensure_authorization_header(parse_browser_headers(raw_text))
+        headers = complete_browser_headers(parse_browser_headers(raw_text))
     except ValueError as exc:
         _print({"status": "error", "message": str(exc)})
         return 2

@@ -130,18 +130,18 @@ def test_adapter_without_credentials_raises_auth_error(tmp_path) -> None:
 
 def test_authorization_header_is_derived_from_the_cookie() -> None:
     """ytmusicapi only recognises browser auth via a SAPISIDHASH header."""
-    from app.integrations.youtube_music.auth import ensure_authorization_header
+    from app.integrations.youtube_music.auth import complete_browser_headers
 
-    headers = ensure_authorization_header(parse_browser_headers(CHROME_PASTE_NO_AUTH))
+    headers = complete_browser_headers(parse_browser_headers(CHROME_PASTE_NO_AUTH))
     assert headers["authorization"].startswith("SAPISIDHASH ")
     assert headers["origin"] == "https://music.youtube.com"
 
 
 def test_existing_authorization_header_is_kept() -> None:
-    from app.integrations.youtube_music.auth import ensure_authorization_header
+    from app.integrations.youtube_music.auth import complete_browser_headers
 
     original = "SAPISIDHASH 1700000000_original"
-    headers = ensure_authorization_header(
+    headers = complete_browser_headers(
         {
             "cookie": "__Secure-3PAPISID=mno",
             "authorization": original,
@@ -152,10 +152,10 @@ def test_existing_authorization_header_is_kept() -> None:
 
 
 def test_cookie_without_sapisid_is_rejected() -> None:
-    from app.integrations.youtube_music.auth import ensure_authorization_header
+    from app.integrations.youtube_music.auth import complete_browser_headers
 
     with pytest.raises(ValueError) as excinfo:
-        ensure_authorization_header({"cookie": "VISITOR_INFO1_LIVE=abc"})
+        complete_browser_headers({"cookie": "VISITOR_INFO1_LIVE=abc"})
     assert "__Secure-3PAPISID" in str(excinfo.value)
 
 
@@ -165,7 +165,7 @@ def test_ytmusicapi_classifies_the_enriched_headers_as_browser_auth() -> None:
     from ytmusicapi.auth.auth_parse import determine_auth_type
     from ytmusicapi.auth.types import AuthType
 
-    from app.integrations.youtube_music.auth import ensure_authorization_header
+    from app.integrations.youtube_music.auth import complete_browser_headers
 
-    headers = ensure_authorization_header(parse_browser_headers(CHROME_PASTE_NO_AUTH))
+    headers = complete_browser_headers(parse_browser_headers(CHROME_PASTE_NO_AUTH))
     assert determine_auth_type(CaseInsensitiveDict(headers)) is AuthType.BROWSER

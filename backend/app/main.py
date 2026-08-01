@@ -8,11 +8,26 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import health, insights, library, publishing, system, telemetry, wave
-from app.api.errors import ApiError, api_error_handler, unhandled_error_handler
+from app.api import (
+    connect,
+    health,
+    insights,
+    library,
+    publishing,
+    system,
+    telemetry,
+    wave,
+)
+from app.api.errors import (
+    ApiError,
+    api_error_handler,
+    unhandled_error_handler,
+    validation_error_handler,
+)
 from app.api.security import CspMiddleware, GuardMiddleware, SessionStore
 from app.jobs.scheduler import Scheduler
 from app.logging_config import configure_logging
@@ -67,6 +82,7 @@ def create_app(settings: Settings | None = None, *, scheduler_enabled: bool = Tr
     app.add_middleware(CspMiddleware, settings=settings)
     app.add_middleware(GuardMiddleware, settings=settings, sessions=app.state.sessions)
 
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
 
@@ -77,6 +93,7 @@ def create_app(settings: Settings | None = None, *, scheduler_enabled: bool = Tr
     app.include_router(wave.router)
     app.include_router(insights.router)
     app.include_router(publishing.router)
+    app.include_router(connect.router)
 
     _mount_frontend(app)
     return app

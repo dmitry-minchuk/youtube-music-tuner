@@ -107,6 +107,15 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map FastAPI's 422 onto the documented 400 VALIDATION_FAILED."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    return JSONResponse(
+        status_code=400,
+        content=error_payload(ValidationFailed("request body is not valid"), request_id),
+    )
+
+
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Never leak internals: the message is generic, details go to the log."""
     request_id = getattr(request.state, "request_id", "unknown")

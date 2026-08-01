@@ -117,8 +117,13 @@ def auth_disconnect(db: Session = Depends(get_session)) -> dict[str, Any]:
         settings.oauth_file.unlink()
         token_removed = True
 
+    # Disconnect means disconnect: browser cookies go too.
+    cookies_removed = settings.browser_auth_file.is_file()
+    settings.browser_auth_file.unlink(missing_ok=True)
+
     return {
         "tokenRemoved": token_removed,
+        "cookiesRemoved": cookies_removed,
         "cancelledJobs": cancelled,
         "revokeUrl": "https://myaccount.google.com/permissions",
     }

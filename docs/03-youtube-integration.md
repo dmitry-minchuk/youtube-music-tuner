@@ -16,11 +16,15 @@
 
 ### Основной вариант — browser authentication
 
-1. Открыть `https://music.youtube.com` в браузере под нужным аккаунтом.
-2. В DevTools → Network найти любой POST на `/youtubei/v1/...`.
-3. Скопировать request headers (Chrome: правый клик → Copy → Copy request headers).
-4. Импортировать: `python -m app.cli browser import -`, CLI валидирует наличие `cookie`, сохраняет `/data/secrets/browser.json` с правами `0600` и сразу выполняет пробный `get_liked_songs(limit=1)` — успех подтверждается только после реального ответа.
-5. Проверить `python -m app.cli status`: `method=BROWSER`.
+Три равнозначных пути, все сохраняют один и тот же файл `/data/secrets/browser.json` с правами `0600`:
+
+1. **Кнопка Connect в Settings.** Пользователь копирует request headers из DevTools и вставляет их в поле. `POST /api/v1/auth/browser-headers` проходит те же guard-ы, что и любая mutation: exact Origin, HttpOnly SameSite=Strict cookie, CSRF-токен, Host allowlist. Значение не возвращается в ответе и не логируется.
+2. **`./connect.sh`.** Открывает видимое окно браузера, ждёт логина, перехватывает заголовки настоящего `/youtubei/` запроса, импортирует их и затирает промежуточный файл.
+3. **`python -m app.cli browser import -`.** Ручной путь для случая, когда UI недоступен.
+
+Любой путь дополняет вставку тем, что обычно теряется при копировании: `authorization` выводится из cookie (`__Secure-3PAPISID`), `x-goog-authuser` по умолчанию `0`. Успех подтверждается только после реального `get_liked_songs(limit=1)`; если YouTube Music отвергает заголовки, файл удаляется, а не остаётся сломанным.
+
+Проверка состояния: `python -m app.cli status` или Settings — ожидается `method=BROWSER`.
 
 Cookies живут долго, но не вечно: при `AuthError` UI показывает reconnect, и headers копируются заново. Это цена работы поверх неофициального интерфейса.
 
@@ -28,7 +32,13 @@ Cookies живут долго, но не вечно: при `AuthError` UI по�
 
 Оставлен в коде на случай, если Google снова начнёт принимать пользовательские клиенты: `credentials import` → `auth` → `/data/secrets/oauth.json`. Адаптер использует OAuth только если `browser.json` отсутствует.
 
-Web UI не принимает и не отображает ни client secret, ни cookies: и то и другое импортируется исключительно через CLI.
+### Изменение границы: UI принимает cookies
+
+Исходное правило «никакой credential не проходит через web UI» было написано в расчёте на рабочий OAuth. После того как OAuth оказался неприменим, единственным способом подключиться остался ручной ввод заголовков в терминал, что для локального личного инструмента непропорционально неудобно. Решение пересмотрено: **cookies принимаются формой в Settings**, потому что риск не меняется качественно — интерфейс доступен только на loopback, CORS выключен, действуют Host allowlist, exact Origin, SameSite=Strict cookie и CSRF-токен, CSP запрещает сторонние скрипты, а сами cookies и так находятся в браузере пользователя.
+
+Что сохраняется без изменений: значение никогда не возвращается в ответе, не попадает в логи (log-filter редактирует `cookie` и `authorization`), хранится только файлом `0600` внутри контейнера и удаляется по `disconnect`.
+
+**Client secret по-прежнему не принимается через UI** — только `python -m app.cli credentials import`.
 
 ## 3. Adapter boundary
 

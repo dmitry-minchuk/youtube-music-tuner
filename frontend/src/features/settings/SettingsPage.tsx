@@ -1,7 +1,8 @@
 import { ApiError } from "@/api/client";
 import { useAuthStatus, useSystemStatus } from "@/api/hooks";
 import { useStartSync, useSyncStatus } from "@/api/library";
-import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
+import { ConnectPanel } from "@/features/settings/ConnectPanel";
+import { PageHeading, Panel } from "@/ui/Panel";
 import { Button } from "@/ui/Button";
 import styles from "@/features/settings/SettingsPage.module.css";
 
@@ -59,15 +60,9 @@ export function SettingsPage(): React.JSX.Element {
               </div>
             </dl>
           )}
-          {auth.data && !auth.data.connected && (
-            <EmptyState
-              message={
-                "Connect from the terminal — the browser never receives the client secret:\n" +
-                "docker compose exec -T tuner python -m app.cli credentials import - < client_secret.json\n" +
-                "docker compose exec tuner python -m app.cli auth"
-              }
-            />
-          )}
+          <div className={styles.connect}>
+            <ConnectPanel auth={auth.data} />
+          </div>
         </Panel>
 
         <Panel
