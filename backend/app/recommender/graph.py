@@ -97,8 +97,9 @@ def _seed_weights(db: Session, roots: set[str]) -> dict[str, float]:
     neighbourhood into the pool.
     """
     weights: dict[str, float] = {}
-    for row in db.scalars(select(TrackAffinity)):
-        weights[row.video_id] = max(0.0, min(1.0, (row.decayed_reward + 1.0) / 2.0))
+    rows = db.execute(select(TrackAffinity.video_id, TrackAffinity.decayed_reward)).all()
+    for video_id, decayed_reward in rows:
+        weights[video_id] = max(0.0, min(1.0, (decayed_reward + 1.0) / 2.0))
     for video_id in roots:
         weights[video_id] = max(weights.get(video_id, 0.0), 0.85)
     return weights
@@ -122,18 +123,28 @@ def build_support(
     reward_sum: dict[str, float] = {}
     reward_weight: dict[str, float] = {}
 
-    for edge in db.scalars(select(CandidateEdge)):
-        candidate = edge.candidate_video_id
-        seeds_by_candidate.setdefault(candidate, set()).add(edge.seed_video_id)
-        if edge.seed_video_id in roots:
-            positive_by_candidate.setdefault(candidate, set()).add(edge.seed_video_id)
+    # Plain column tuples rather than ORM entities: the graph is meant to
+    # reach tens of thousands of edges and this runs on every wave.
+    edges = db.execute(
+        select(
+            CandidateEdge.candidate_video_id,
+            CandidateEdge.seed_video_id,
+            CandidateEdge.hop,
+            CandidateEdge.rank,
+            CandidateEdge.source_type,
+        )
+    ).all()
+
+    for candidate, seed, hop, rank, source_type in edges:
+        seeds_by_candidate.setdefault(candidate, set()).add(seed)
+        if seed in roots:
+            positive_by_candidate.setdefault(candidate, set()).add(seed)
 
         current = best.get(candidate)
-        key = (edge.hop, edge.rank)
-        if current is None or key < (current[1], current[0]):
-            best[candidate] = (edge.rank, edge.hop, edge.source_type, edge.seed_video_id)
+        if current is None or (hop, rank) < (current[1], current[0]):
+            best[candidate] = (rank, hop, source_type, seed)
 
-        weight = weights.get(edge.seed_video_id, 0.4) * hop_discount(edge.hop)
+        weight = weights.get(seed, 0.4) * hop_discount(hop)
         reward_sum[candidate] = reward_sum.get(candidate, 0.0) + weight
         reward_weight[candidate] = reward_weight.get(candidate, 0.0) + 1.0
 

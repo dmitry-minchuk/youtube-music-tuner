@@ -60,10 +60,36 @@ RECENT_PLAY_MIN = 30
 RECENT_PLAY_MAX = 400
 RECENT_PLAY_POOL_SHARE = 0.35
 
+# Familiar tracks are held to a much shorter window. Hearing a favourite
+# again next week is the point of a familiar quota; the wide window is there
+# to stop *discovery* from recycling, and applying it to likes simply empties
+# the familiar side of the wave. It also scales down with the number of
+# favourites that can actually be played — a listener whose likes are mostly
+# blocked from embedding has very few to rotate through.
+FAMILIAR_RECENT_WINDOW = 15
+FAMILIAR_RECENT_SHARE = 3
+
+# A wave never consumes more than this share of the familiar tracks available
+# to it. Take them all and the next wave has nothing left to differ by, which
+# is how the quota alone used to produce a 45% repeat rate. A cold wave is an
+# explicit request for the familiar, so it may reuse a little more of the
+# pool; a hot one leaves more in reserve.
+ROTATION_SHARE_COLD = 0.75
+ROTATION_SHARE_HOT = 0.50
+
+
+def rotation_share(temperature: int) -> float:
+    position = max(0, min(100, temperature)) / 100
+    return ROTATION_SHARE_COLD + position * (ROTATION_SHARE_HOT - ROTATION_SHARE_COLD)
+
 # How many past generations are remembered when avoiding repeats, and how
 # hard each one is penalised. Index 0 is the wave just before this one.
 WAVE_HISTORY_DEPTH = 4
 HISTORY_PENALTY: tuple[float, ...] = (0.90, 0.45, 0.22, 0.10)
+# Favourites are a small set — a handful of likes cannot fill four waves
+# without repeating — so the same penalty would empty the familiar quota
+# after a few restarts. Repeating a liked track is not the complaint.
+FAMILIAR_HISTORY_PENALTY: tuple[float, ...] = (0.20, 0.10, 0.05, 0.02)
 
 PLAYBACK_ERROR_COOLDOWN = dt.timedelta(hours=24)
 REDISCOVERY_DAYS = 60
@@ -153,17 +179,21 @@ def _error_cooldown(db: Session, now: dt.datetime) -> set[str]:
     return set(rows)
 
 
-def skip_quarantine(db: Session, now: dt.datetime) -> set[str]:
+def skip_quarantine(
+    db: Session, now: dt.datetime, protected: set[str] | None = None
+) -> set[str]:
     """Tracks you have skipped often enough to deserve a rest.
 
     Two skips buy a week off, three or more a month. A track you have also
     finished at least once is given more rope: skipping it may just have been
-    the wrong moment.
+    the wrong moment. Liked tracks are never quarantined — an explicit like
+    outranks any number of "not right now" skips.
     """
+    protected = protected or set()
     quarantined: set[str] = set()
     rows = db.scalars(select(TrackAffinity).where(TrackAffinity.skips > 0))
     for row in rows:
-        if row.last_skipped_at is None:
+        if row.last_skipped_at is None or row.video_id in protected:
             continue
         age = now - row.last_skipped_at
         threshold = row.skips - (1 if row.completions > 0 else 0)
@@ -209,10 +239,10 @@ def _strong_positive(db: Session) -> set[str]:
 
 
 def _warm(db: Session) -> set[str]:
-    """Finished at least once and still positive on the decayed average."""
+    """Played before and still positive on the decayed average."""
     rows = db.scalars(
         select(TrackAffinity.video_id).where(
-            TrackAffinity.completions > 0,
+            TrackAffinity.plays_all > 0,
             TrackAffinity.decayed_reward >= WARM_REWARD_FLOOR,
         )
     ).all()
@@ -280,6 +310,7 @@ def _build_features(
     affinity: TrackAffinity | None,
     temperature: int,
     now: dt.datetime,
+    liked: bool = False,
 ) -> RuleFeatures:
     strength = SOURCE_STRENGTH.get(source_type, 0.5)
     if support is not None:
@@ -299,8 +330,11 @@ def _build_features(
             days = (now - affinity.last_played_at).days
             if days >= REDISCOVERY_DAYS:
                 rediscovery = min(1.0, days / 365)
-        # Recent repetition tires the ear.
+        # Recent repetition tires the ear — but a track you deliberately
+        # liked is one you asked to hear often, so it tires more slowly.
         fatigue = min(0.30, 0.10 * affinity.plays_7d)
+        if liked:
+            fatigue *= 0.4
         if affinity.last_skipped_at is not None:
             skipped_days = (now - affinity.last_skipped_at).days
             if skipped_days <= FATIGUE_WINDOW_DAYS:
@@ -347,11 +381,13 @@ def _apply_freshness(
     """
     relaxations: list[str] = []
     recent_set = set(recent)
+    familiar_window = min(FAMILIAR_RECENT_WINDOW, len(familiar_pool) // FAMILIAR_RECENT_SHARE)
+    recent_familiar = set(recent[:familiar_window])
 
-    # Recency is a hard filter. It cannot starve the wave because the window
-    # is already capped at half the pool.
+    # Recency is a hard filter, but a two-speed one: wide for discovery,
+    # narrow for the familiar side.
     discovery_pool = pool - familiar_pool
-    familiar_available = (pool & familiar_pool) - recent_set
+    familiar_available = (pool & familiar_pool) - recent_familiar
     discovery_available = discovery_pool - recent_set
     reachable = len(familiar_available) + len(discovery_available)
 
@@ -416,7 +452,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     warm = _warm(db)
     proven = _proven_playable(db)
     error_cooldown = _error_cooldown(db, now)
-    quarantined = skip_quarantine(db, now)
+    quarantined = skip_quarantine(db, now, protected=liked)
     support_by_id = build_support(db, now=now)
 
     # The pool is the whole graph: edges are knowledge, not a cache.
@@ -489,6 +525,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             affinity=affinities.get(video_id),
             temperature=request.temperature,
             now=now,
+            liked=video_id in liked,
         )
         rule_value = rule_score(features)
         affinity_row = affinities.get(video_id)
@@ -522,12 +559,14 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             score = rule_value
             quality = rule_to_quality_expected(rule_value)
 
+        familiar = video_id in familiar_pool
+
         # Anything a recent wave already offered starts from further back.
         history_position = freshness.history_index.get(video_id)
-        if history_position is not None and history_position < len(HISTORY_PENALTY):
-            score -= HISTORY_PENALTY[history_position]
+        penalties = FAMILIAR_HISTORY_PENALTY if familiar else HISTORY_PENALTY
+        if history_position is not None and history_position < len(penalties):
+            score -= penalties[history_position]
 
-        familiar = video_id in familiar_pool
         reasons = _reason_codes(
             familiar=familiar,
             liked=video_id in liked,
@@ -553,16 +592,24 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         )
 
     candidates.sort(key=lambda item: (-item.score, item.video_id))
+
+    available_familiar = sum(1 for item in candidates if item.familiar)
+    rotation_cap = int(available_familiar * rotation_share(request.temperature))
+    effective_target = min(familiar_target, rotation_cap)
+
     reranked = rerank(
         candidates,
         request.length,
-        familiar_target,
+        effective_target,
         rng=rng,
         temperature=request.temperature,
     )
 
     relaxations = [*freshness.relaxations, *reranked.relaxations]
-    available_familiar = sum(1 for item in candidates if item.familiar)
+    if effective_target < familiar_target:
+        relaxations.append(
+            "FAMILIAR_ROTATION_CAP" if rotation_cap < familiar_target else "FAMILIAR_POOL_WIDENED"
+        )
     if reranked.actual_familiar_count < familiar_target and available_familiar < familiar_target:
         relaxations.append("FAMILIAR_POOL_WIDENED")
 

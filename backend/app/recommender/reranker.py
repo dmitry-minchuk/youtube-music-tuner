@@ -131,7 +131,7 @@ def _violates(
 def _adjusted_score(
     candidate: RerankCandidate,
     chosen: Sequence[RerankCandidate],
-    familiar_needed: bool,
+    quota_pressure: float,
 ) -> float:
     score = candidate.score
     recent = chosen[-DIVERSITY_WINDOW:]
@@ -148,8 +148,13 @@ def _adjusted_score(
     if candidate.seed_video_id is not None:
         same_source = sum(1 for item in recent if item.seed_video_id == candidate.seed_video_id)
         score -= SOURCE_CONCENTRATION_PENALTY * same_source / max(1, len(recent))
-    if familiar_needed == candidate.familiar:
-        score += QUOTA_BONUS
+    # The quota is a target share, not a tie breaker: the nudge grows as the
+    # remaining slots run out, the way calibrated re-rankers keep a feed's
+    # composition on target instead of hoping the scores line up.
+    if candidate.familiar:
+        score += QUOTA_BONUS * quota_pressure
+    else:
+        score += QUOTA_BONUS * (1.0 - quota_pressure)
     if not candidate.proven_playable and len(chosen) < PROVEN_HEAD_POSITIONS:
         # Fades out after the opening positions so discovery is not punished.
         score -= PROVEN_HEAD_BONUS * (1 - len(chosen) / PROVEN_HEAD_POSITIONS)
@@ -206,7 +211,9 @@ def rerank(
 
     while len(chosen) < length and remaining:
         limits = RELAXATION_LADDER[ladder_index]
-        familiar_needed = familiar_count < familiar_target
+        slots_left = length - len(chosen)
+        deficit = max(0, familiar_target - familiar_count)
+        quota_pressure = min(1.0, deficit / slots_left) if slots_left else 0.0
 
         allowed = [item for item in remaining if not _violates(item, chosen, limits)]
         if not allowed:
@@ -218,7 +225,14 @@ def rerank(
                 continue
             break
 
-        scored = [(_adjusted_score(item, chosen, familiar_needed), item) for item in allowed]
+        # Every remaining slot is owed to the familiar side: stop competing on
+        # score and just take one, as long as any is still admissible.
+        if deficit >= slots_left:
+            owed = [item for item in allowed if item.familiar]
+            if owed:
+                allowed = owed
+
+        scored = [(_adjusted_score(item, chosen, quota_pressure), item) for item in allowed]
         best = _pick(scored, rng, tau)
         remaining.remove(best)
         chosen.append(best)
