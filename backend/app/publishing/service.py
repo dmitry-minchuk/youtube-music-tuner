@@ -1,0 +1,447 @@
+"""Managed playlist setup and publishing (docs/03 section 8, docs/10 s.5).
+
+Ownership is proven twice — the local manifest and the remote marker — and
+the setup intent is written before the external create, so a lost response
+never leaves an unreachable playlist behind.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import logging
+import uuid
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.domain.catalog import PlaylistDiffPlan, RemotePlaylistSnapshot
+from app.integrations.youtube_music.errors import IntegrationError
+from app.integrations.youtube_music.port import MusicCatalogPort
+from app.persistence.models import (
+    ManagedPlaylist,
+    PlaylistBackup,
+    PlaylistPublication,
+    utcnow,
+)
+from app.publishing.planner import (
+    PlanSlice,
+    RemoteItem,
+    build_plan,
+    plan_window,
+    with_refreshed_set_video_ids,
+)
+from app.publishing.quality_gates import QUALITY_GATE_VERSION
+
+logger = logging.getLogger(__name__)
+
+MARKER_TEMPLATE = "Managed by YouTube Music Tuner; instance={instance}; schema=1"
+PLAYLIST_KINDS = {"FAMILIAR": 20, "BALANCE": 50, "DISCOVERY": 80}
+PLAYLIST_TITLES = {
+    "FAMILIAR": "Tuner · Familiar",
+    "BALANCE": "Tuner · Balance",
+    "DISCOVERY": "Tuner · Discovery",
+}
+PUBLISH_WINDOW = dt.timedelta(hours=24)
+MAX_BACKUPS = 30
+
+
+class OwnershipError(Exception):
+    """Raised whenever a write would touch something Tuner does not own."""
+
+
+class PlaylistNotVerified(Exception):
+    pass
+
+
+def marker_for(instance_id: str) -> str:
+    return MARKER_TEMPLATE.format(instance=instance_id)
+
+
+def desired_hash(video_ids: list[str]) -> str:
+    return hashlib.sha256(json.dumps(video_ids, separators=(",", ":")).encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class SetupResult:
+    managed_playlist_id: str
+    playlist_id: str | None
+    status: str
+    effective_target_size: int
+    error_code: str | None = None
+
+
+def create_setup_intent(
+    db: Session,
+    kind: str,
+    instance_id: str,
+    desired: list[str],
+    *,
+    configured_target_size: int = 60,
+) -> ManagedPlaylist:
+    """Persist CREATING before any external call (docs/03 section 8)."""
+    if kind not in PLAYLIST_KINDS:
+        raise ValueError(f"unknown managed playlist kind: {kind}")
+
+    existing = db.scalar(select(ManagedPlaylist).where(ManagedPlaylist.kind == kind))
+    if existing is not None and existing.status in {"ACTIVE", "UNVERIFIED", "CLEANUP_REQUIRED"}:
+        return existing
+
+    manifest = existing or ManagedPlaylist(
+        managed_playlist_id=str(uuid.uuid4()),
+        kind=kind,
+        instance_id=instance_id,
+        ownership_marker=marker_for(instance_id),
+        temperature=PLAYLIST_KINDS[kind],
+    )
+    manifest.instance_id = instance_id
+    manifest.ownership_marker = marker_for(instance_id)
+    manifest.configured_target_size = configured_target_size
+    manifest.accepted_desired_hash = desired_hash(desired)
+    manifest.status = "CREATING"
+    manifest.setup_started_at = utcnow()
+    manifest.setup_error_code = None
+    db.add(manifest)
+    db.flush()
+    return manifest
+
+
+def complete_setup(
+    db: Session,
+    manifest: ManagedPlaylist,
+    catalog: MusicCatalogPort,
+    desired: list[str],
+) -> SetupResult:
+    """Create the playlist, register the id immediately, then verify."""
+    title = PLAYLIST_TITLES[manifest.kind]
+    description = manifest.ownership_marker
+
+    try:
+        playlist_id = catalog.create_private_playlist(title, description, desired)
+    except IntegrationError as exc:
+        manifest.setup_error_code = exc.code
+        db.flush()
+        # Stay CREATING: reconciliation decides later whether it went through.
+        return SetupResult(
+            manifest.managed_playlist_id, None, "CREATING", len(desired), error_code=exc.code
+        )
+
+    # Register before verifying so a crash cannot orphan the playlist.
+    manifest.playlist_id = playlist_id
+    manifest.status = "UNVERIFIED"
+    db.flush()
+
+    return verify_setup(db, manifest, catalog, desired)
+
+
+def verify_setup(
+    db: Session,
+    manifest: ManagedPlaylist,
+    catalog: MusicCatalogPort,
+    desired: list[str],
+) -> SetupResult:
+    if manifest.playlist_id is None:
+        return SetupResult(manifest.managed_playlist_id, None, manifest.status, len(desired))
+
+    try:
+        snapshot = catalog.playlist(manifest.playlist_id)
+    except IntegrationError as exc:
+        manifest.setup_error_code = exc.code
+        db.flush()
+        return SetupResult(
+            manifest.managed_playlist_id,
+            manifest.playlist_id,
+            manifest.status,
+            len(desired),
+            error_code=exc.code,
+        )
+
+    matches_marker = bool(
+        snapshot.description and manifest.ownership_marker in snapshot.description
+    )
+    matches_order = list(snapshot.video_ids) == desired
+    unique = len(set(snapshot.video_ids)) == len(snapshot.video_ids)
+
+    if matches_marker and matches_order and unique:
+        manifest.status = "ACTIVE"
+        manifest.setup_finished_at = utcnow()
+        manifest.setup_error_code = None
+    else:
+        manifest.setup_error_code = "VERIFICATION_MISMATCH"
+        # Never "top up" or reshuffle automatically: leave it for a human.
+    db.flush()
+
+    return SetupResult(
+        manifest.managed_playlist_id,
+        manifest.playlist_id,
+        manifest.status,
+        len(desired),
+        error_code=manifest.setup_error_code,
+    )
+
+
+def reconcile_setup(
+    db: Session,
+    manifest: ManagedPlaylist,
+    catalog: MusicCatalogPort,
+    desired: list[str],
+) -> SetupResult:
+    """After a crash: adopt an exact marker match, never create a duplicate."""
+    if manifest.status == "ACTIVE":
+        return SetupResult(
+            manifest.managed_playlist_id, manifest.playlist_id, "ACTIVE", len(desired)
+        )
+
+    if manifest.playlist_id is not None:
+        return verify_setup(db, manifest, catalog, desired)
+
+    expected_title = PLAYLIST_TITLES[manifest.kind]
+    try:
+        candidates = [
+            playlist
+            for playlist in catalog.library_playlists()
+            if playlist.title == expected_title
+            and playlist.description
+            and manifest.ownership_marker in playlist.description
+        ]
+    except IntegrationError as exc:
+        manifest.setup_error_code = exc.code
+        db.flush()
+        return SetupResult(
+            manifest.managed_playlist_id, None, manifest.status, len(desired), error_code=exc.code
+        )
+
+    if len(candidates) == 1:
+        manifest.playlist_id = candidates[0].playlist_id
+        manifest.status = "UNVERIFIED"
+        db.flush()
+        return verify_setup(db, manifest, catalog, desired)
+
+    if len(candidates) > 1:
+        manifest.status = "CLEANUP_REQUIRED"
+        manifest.setup_error_code = "AMBIGUOUS_MATCH"
+        db.flush()
+        return SetupResult(
+            manifest.managed_playlist_id,
+            None,
+            manifest.status,
+            len(desired),
+            error_code="AMBIGUOUS_MATCH",
+        )
+
+    # Nothing was created: safe to retry the create explicitly.
+    manifest.status = "CREATING"
+    db.flush()
+    return SetupResult(manifest.managed_playlist_id, None, "CREATING", len(desired))
+
+
+def cleanup_setup_artifact(
+    db: Session, manifest: ManagedPlaylist, catalog: MusicCatalogPort
+) -> str:
+    """Delete only our own unverified artifact, after a fresh marker check."""
+    if manifest.status not in {"UNVERIFIED", "CLEANUP_REQUIRED"}:
+        raise OwnershipError("only an unverified setup artifact may be deleted")
+    if manifest.playlist_id is None:
+        manifest.status = "DELETED"
+        db.flush()
+        return "DELETED"
+
+    try:
+        catalog.delete_managed_playlist(manifest.playlist_id, manifest.ownership_marker)
+    except IntegrationError as exc:
+        manifest.status = "CLEANUP_REQUIRED"
+        manifest.setup_error_code = exc.code
+        db.flush()
+        # Ambiguous outcome: no blind retry, the next attempt reads first.
+        return "CLEANUP_REQUIRED"
+
+    manifest.status = "DELETED"
+    manifest.playlist_id = None
+    manifest.setup_finished_at = utcnow()
+    db.flush()
+    return "DELETED"
+
+
+def require_writable(manifest: ManagedPlaylist) -> None:
+    if manifest.status == "ACTIVE":
+        return
+    if manifest.status in {"CREATING", "UNVERIFIED", "CLEANUP_REQUIRED"}:
+        raise PlaylistNotVerified(f"playlist is {manifest.status}")
+    raise OwnershipError("playlist is not writable")
+
+
+def snapshot_to_items(snapshot: RemotePlaylistSnapshot) -> list[RemoteItem]:
+    return [
+        RemoteItem(video_id=item.track.video_id, set_video_id=item.set_video_id)
+        for item in snapshot.items
+        if item.track.video_id and item.set_video_id
+    ]
+
+
+def store_backup(
+    db: Session, manifest: ManagedPlaylist, snapshot: RemotePlaylistSnapshot, publication_id: str
+) -> PlaylistBackup:
+    backup = PlaylistBackup(
+        backup_id=str(uuid.uuid4()),
+        managed_playlist_id=manifest.managed_playlist_id,
+        publication_id=publication_id,
+        items_json={"videoIds": list(snapshot.video_ids)},
+        content_hash=desired_hash(list(snapshot.video_ids)),
+    )
+    db.add(backup)
+    db.flush()
+    _prune_backups(db, manifest)
+    return backup
+
+
+def _prune_backups(db: Session, manifest: ManagedPlaylist) -> None:
+    rows = db.scalars(
+        select(PlaylistBackup)
+        .where(PlaylistBackup.managed_playlist_id == manifest.managed_playlist_id)
+        .order_by(PlaylistBackup.created_at.desc())
+    ).all()
+    for stale in rows[MAX_BACKUPS:]:
+        db.delete(stale)
+
+
+def active_partial(db: Session, manifest: ManagedPlaylist) -> PlaylistPublication | None:
+    return db.scalar(
+        select(PlaylistPublication)
+        .where(
+            PlaylistPublication.managed_playlist_id == manifest.managed_playlist_id,
+            PlaylistPublication.status == "PARTIAL",
+        )
+        .order_by(PlaylistPublication.created_at.desc())
+        .limit(1)
+    )
+
+
+def publish_window(
+    db: Session,
+    manifest: ManagedPlaylist,
+    catalog: MusicCatalogPort,
+    desired: list[str],
+    *,
+    target_generation_id: str | None = None,
+    now: dt.datetime | None = None,
+) -> PlaylistPublication:
+    """Apply one bounded window of the diff and verify the outcome."""
+    now = now or utcnow()
+    require_writable(manifest)
+    assert manifest.playlist_id is not None
+
+    partial = active_partial(db, manifest)
+    if partial is not None:
+        # A continuation keeps the immutable desired snapshot it started with.
+        desired = list(partial.desired_snapshot_json.get("videoIds", desired))
+        publication = partial
+    else:
+        publication = PlaylistPublication(
+            publication_id=str(uuid.uuid4()),
+            managed_playlist_id=manifest.managed_playlist_id,
+            status="PLANNED",
+            target_generation_id=target_generation_id,
+            quality_gate_version=QUALITY_GATE_VERSION,
+            configured_target_size=manifest.configured_target_size,
+            effective_target_size=len(desired),
+            desired_snapshot_json={"videoIds": desired},
+            desired_hash=desired_hash(desired),
+            created_at=now,
+        )
+        db.add(publication)
+        db.flush()
+
+    snapshot = catalog.playlist(manifest.playlist_id)
+    if not (snapshot.description and manifest.ownership_marker in snapshot.description):
+        publication.status = "FAILED"
+        publication.error_code = "MARKER_MISMATCH"
+        db.flush()
+        raise OwnershipError("remote ownership marker does not match")
+
+    remote_items = snapshot_to_items(snapshot)
+    current_hash = desired_hash([item.video_id for item in remote_items])
+
+    if (
+        publication.expected_intermediate_hash
+        and publication.expected_intermediate_hash != current_hash
+    ):
+        publication.status = "FAILED"
+        publication.error_code = "REMOTE_CHANGED"
+        db.flush()
+        return publication
+
+    if publication.remote_before_json.get("videoIds") is None:
+        publication.remote_before_json = {"videoIds": [i.video_id for i in remote_items]}
+        store_backup(db, manifest, snapshot, publication.publication_id)
+
+    plan_slice = plan_window(remote_items, desired)
+    if not plan_slice.operations:
+        publication.status = "COMPLETE"
+        publication.verification_hash = current_hash
+        publication.remaining_item_changes = 0
+        publication.remaining_estimated_requests = 0
+        manifest.last_published_at = now
+        manifest.next_publish_after = now + PUBLISH_WINDOW
+        db.flush()
+        return publication
+
+    publication.status = "WRITING"
+    db.flush()
+
+    plan = with_refreshed_set_video_ids(_plan_from_slice(manifest, plan_slice), remote_items)
+    try:
+        catalog.apply_playlist_diff(plan)
+    except IntegrationError as exc:
+        publication.status = "FAILED"
+        publication.error_code = exc.code
+        db.flush()
+        return publication
+
+    publication.status = "VERIFYING"
+    publication.applied_operations_json = {
+        "operations": [{"kind": op.kind, "videoId": op.video_id} for op in plan_slice.operations]
+    }
+    db.flush()
+
+    verification = catalog.playlist(manifest.playlist_id)
+    verified_ids = list(verification.video_ids)
+    verified_hash = desired_hash(verified_ids)
+
+    if verified_ids == desired:
+        publication.status = "COMPLETE"
+        publication.remaining_item_changes = 0
+        publication.remaining_estimated_requests = 0
+        manifest.last_published_at = now
+        manifest.next_publish_after = now + PUBLISH_WINDOW
+    elif verified_ids == list(plan_slice.expected_order):
+        publication.status = "PARTIAL"
+        publication.remaining_item_changes = plan_slice.remaining_item_changes
+        publication.remaining_estimated_requests = plan_slice.remaining_requests
+        publication.expected_intermediate_hash = verified_hash
+        publication.not_before = now + PUBLISH_WINDOW
+        manifest.last_published_at = now
+        manifest.next_publish_after = now + PUBLISH_WINDOW
+    else:
+        publication.status = "FAILED"
+        publication.error_code = "VERIFICATION_MISMATCH"
+
+    publication.verification_hash = verified_hash
+    db.flush()
+
+    logger.info(
+        "publish window finished",
+        extra={
+            "operation": "playlist_publish",
+            "outcome": publication.status,
+            "playlist_id": manifest.playlist_id,
+            "remaining": publication.remaining_item_changes,
+        },
+    )
+    return publication
+
+
+def _plan_from_slice(manifest: ManagedPlaylist, plan_slice: PlanSlice) -> PlaylistDiffPlan:
+    assert manifest.playlist_id is not None
+    return build_plan(manifest.playlist_id, manifest.ownership_marker, plan_slice.operations)

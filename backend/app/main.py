@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import health, insights, library, system, telemetry, wave
+from app.api import health, insights, library, publishing, system, telemetry, wave
 from app.api.errors import ApiError, api_error_handler, unhandled_error_handler
 from app.api.security import CspMiddleware, GuardMiddleware, SessionStore
 from app.jobs.scheduler import Scheduler
@@ -76,6 +76,7 @@ def create_app(settings: Settings | None = None, *, scheduler_enabled: bool = Tr
     app.include_router(telemetry.router)
     app.include_router(wave.router)
     app.include_router(insights.router)
+    app.include_router(publishing.router)
 
     _mount_frontend(app)
     return app
