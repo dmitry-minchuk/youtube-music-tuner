@@ -111,7 +111,7 @@ CREATING/UNVERIFIED/CLEANUP_REQUIRED не маскируются под гото
 
 - `YouTube Music`: account, OAuth status, reconnect, last sync;
 - `Automation`: auto-train, auto-publish, publish window, default temperature;
-- `Playback`: volume, repeat default, explicit-content handling если metadata доступна;
+- `Playback`: pause-when-hidden (по умолчанию включено, см. docs/04 section 1), default temperature, volume, repeat default;
 - `Privacy`: event retention, export summary, delete telemetry, disconnect;
 - `Diagnostics`: health, database path/size, dependency version, circuit breaker, logs download without secrets.
 
@@ -135,7 +135,8 @@ CREATING/UNVERIFIED/CLEANUP_REQUIRED не маскируются под гото
 - контраст WCAG AA для текста/контролов;
 - temperature доступна arrow keys и имеет `aria-valuetext`;
 - иконки имеют accessible labels;
-- состояние like/dislike не обозначается только цветом;
+- состояние like/dislike не обозначается только цветом: активная оценка несёт заполненный глиф, рамку, `aria-pressed` и подпись статуса синхронизации (`syncing…`/`synced`/`not synced`);
+- каждое действие получает немедленный отклик: оптимистичное состояние кнопки, `:active`-обратная связь, `disabled` пока плеер не готов, индикатор `retuning…` при пересборке хвоста очереди;
 - анимации отключаются при `prefers-reduced-motion`;
 - hit target минимум 40×40 px.
 

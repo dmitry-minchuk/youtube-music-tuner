@@ -302,6 +302,33 @@ class RatingRequest(BaseModel):
     desiredState: Literal["LIKE", "DISLIKE", "INDIFFERENT"] = Field()
 
 
+@router.get("/tracks/{video_id}/rating")
+def get_rating(video_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Current rating and how far it got towards YouTube Music.
+
+    The UI needs this to show the like state and whether it synced; without
+    it a click looks like nothing happened (docs/03 section 6).
+    """
+    state = db.get(LibraryTrackState, video_id)
+    if state is None:
+        return {
+            "videoId": video_id,
+            "desiredState": "INDIFFERENT",
+            "revision": 0,
+            "syncStatus": "SYNCED",
+            "isLiked": False,
+            "isDisliked": False,
+        }
+    return {
+        "videoId": video_id,
+        "desiredState": state.desired_rating or ("LIKE" if state.is_liked else "INDIFFERENT"),
+        "revision": state.rating_revision,
+        "syncStatus": state.rating_sync_status,
+        "isLiked": state.is_liked,
+        "isDisliked": state.is_disliked,
+    }
+
+
 @router.put("/tracks/{video_id}/rating")
 def set_rating(
     video_id: str,

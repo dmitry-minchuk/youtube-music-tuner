@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSettings } from "@/api/settings";
 import { createIframePlayer } from "@/player/iframeAdapter";
 import { currentTrack, usePlayerStore } from "@/player/playerStore";
 import styles from "@/player/PlayerPanel.module.css";
@@ -14,6 +15,8 @@ export function PlayerPanel(): React.JSX.Element {
   const detachPort = usePlayerStore((state) => state.detachPort);
   const pausedByPolicy = usePlayerStore((state) => state.pausedByPolicy);
   const track = usePlayerStore(currentTrack);
+  const settings = useSettings();
+  const setPauseOnHidden = usePlayerStore((state) => state.setPauseOnHidden);
 
   useEffect(() => {
     let disposed = false;
@@ -37,6 +40,10 @@ export function PlayerPanel(): React.JSX.Element {
   }, [attachPort, detachPort]);
 
   useEffect(() => {
+    if (settings.data) setPauseOnHidden(settings.data.pauseOnHidden);
+  }, [settings.data, setPauseOnHidden]);
+
+  useEffect(() => {
     const onVisibility = () =>
       usePlayerStore.getState().handleVisibilityChange(document.visibilityState === "hidden");
     const onPageHide = () => usePlayerStore.getState().handlePageHide();
@@ -57,7 +64,8 @@ export function PlayerPanel(): React.JSX.Element {
       {error && <p className={styles.error}>{error}</p>}
       {pausedByPolicy && (
         <p className={styles.notice} role="status">
-          Playback paused because this tab is no longer visible.
+          Playback paused because this tab is no longer visible. You can turn this off in
+          Settings → Playback.
         </p>
       )}
       {track ? (

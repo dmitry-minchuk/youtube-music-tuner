@@ -46,7 +46,9 @@ export function App(): React.JSX.Element {
               <Page />
             </div>
           </main>
-          <PlayerPanel />
+          <div className={styles.aside}>
+            <PlayerPanel />
+          </div>
         </div>
         <PlayerBar />
       </div>

@@ -32,6 +32,7 @@ interface PlayerStoreState {
   positionSeconds: number;
   durationSeconds: number | null;
   volume: number;
+  pauseOnHidden: boolean;
   pausedByPolicy: boolean;
   pendingEvents: number;
   lastPlayedAt: Record<string, number>;
@@ -45,6 +46,7 @@ interface PlayerStoreState {
   previous: () => Promise<void>;
   seekTo: (seconds: number) => void;
   setVolume: (percent: number) => void;
+  setPauseOnHidden: (value: boolean) => void;
   rate: (rating: "LIKE" | "DISLIKE") => Promise<void>;
   handleVisibilityChange: (hidden: boolean) => void;
   handlePageHide: () => void;
@@ -126,6 +128,13 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     set({ sessionId: null });
   }
 
+  /** Move on without claiming the user pressed next (docs/04 s.3). */
+  async function advance() {
+    await closeSession(null);
+    const nextIndex = get().index + 1;
+    if (nextIndex < get().queue.length) await startTrack(nextIndex);
+  }
+
   async function startTrack(index: number) {
     const { queue, port } = get();
     const track = queue[index];
@@ -163,6 +172,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     positionSeconds: 0,
     durationSeconds: null,
     volume: 80,
+    pauseOnHidden: true,
     pausedByPolicy: false,
     pendingEvents: 0,
     lastPlayedAt: {},
@@ -177,13 +187,17 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
         if (event.state === "PAUSED") void emitAndFlush("paused");
         if (event.state === "BUFFERING") void emit("buffering_started");
         if (event.state === "ERROR") {
-          void emitAndFlush("player_error", { errorCode: event.errorCode });
-          void get().next();
+          // Not playable here (embedding disabled, region block). Neutral for
+          // taste: advance without recording a skip.
+          void (async () => {
+            await emitAndFlush("player_error", { errorCode: event.errorCode });
+            await advance();
+          })();
         }
         if (event.state === "ENDED") {
           void (async () => {
             await emitAndFlush("ended");
-            await get().next();
+            await advance();
           })();
         }
       });
@@ -238,6 +252,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
       get().port?.setVolume(percent);
     },
 
+    setPauseOnHidden(value) {
+      set({ pauseOnHidden: value });
+    },
+
     async rate(rating) {
       const track = currentTrack(get());
       if (!track) return;
@@ -245,16 +263,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     },
 
     handleVisibilityChange(hidden) {
-      const { port, state } = get();
+      const { port, state, pauseOnHidden } = get();
       if (!port) return;
       void emit("visibility_changed", { state: hidden ? "hidden" : "visible" });
-      if (hidden && state === "PLAYING") {
-        // YouTube policy: a player outside the viewed tab is a background
-        // player, so pause and require an explicit resume.
+      // Browsers also report "hidden" when the window is merely occluded by
+      // another application, so this is a user preference rather than a hard
+      // rule; the default keeps the policy-safe behaviour.
+      if (hidden && pauseOnHidden && state === "PLAYING") {
         port.pause();
         set({ pausedByPolicy: true });
         void telemetry.flush();
       }
+      if (!hidden) set({ pausedByPolicy: false });
     },
 
     handlePageHide() {

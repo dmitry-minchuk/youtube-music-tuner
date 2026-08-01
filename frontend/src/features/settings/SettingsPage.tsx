@@ -1,6 +1,7 @@
 import { ApiError } from "@/api/client";
 import { useAuthStatus, useSystemStatus } from "@/api/hooks";
 import { useStartSync, useSyncStatus } from "@/api/library";
+import { useSettings, useUpdateSettings } from "@/api/settings";
 import { ConnectPanel } from "@/features/settings/ConnectPanel";
 import { PageHeading, Panel } from "@/ui/Panel";
 import { Button } from "@/ui/Button";
@@ -32,6 +33,8 @@ export function SettingsPage(): React.JSX.Element {
   const auth = useAuthStatus();
   const sync = useSyncStatus();
   const startSync = useStartSync();
+  const settings = useSettings();
+  const updateSettings = useUpdateSettings();
 
   return (
     <>
@@ -106,6 +109,42 @@ export function SettingsPage(): React.JSX.Element {
               Sync job {sync.data.activeJob.status.toLowerCase()}…
             </p>
           )}
+        </Panel>
+
+        <Panel title="Playback" description="How the player behaves while you are elsewhere">
+          <label className={styles.toggleRow}>
+            <input
+              type="checkbox"
+              checked={settings.data?.pauseOnHidden ?? true}
+              onChange={(event) =>
+                updateSettings.mutate({ pauseOnHidden: event.target.checked })
+              }
+            />
+            <span>
+              <span className={styles.toggleTitle}>Pause when this tab is hidden</span>
+              <span className={styles.toggleHint}>
+                YouTube's Developer Policies treat a player outside the page you are viewing as a
+                background player, so this is on by default. Browsers also report "hidden" when the
+                window is simply covered by another application, which is stricter than the policy
+                requires — switch it off if that gets in your way.
+              </span>
+            </span>
+          </label>
+
+          <label className={styles.toggleRow}>
+            <span className={styles.toggleTitle}>Default temperature</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={settings.data?.defaultTemperature ?? 50}
+              onChange={(event) =>
+                updateSettings.mutate({ defaultTemperature: Number(event.target.value) })
+              }
+              aria-valuetext={`${settings.data?.defaultTemperature ?? 50}`}
+            />
+            <span className={styles.toggleValue}>{settings.data?.defaultTemperature ?? 50}</span>
+          </label>
         </Panel>
 
         <Panel title="Diagnostics" description="Local health and external call budget">

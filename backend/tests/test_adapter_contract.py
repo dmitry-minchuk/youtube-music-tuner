@@ -115,7 +115,7 @@ def test_related_uses_browse_id_from_watch_playlist(adapter_factory) -> None:
 
 
 def test_text_only_shelf_does_not_break_related(adapter_factory) -> None:
-    """"About the artist" returns a biography string, not a track list."""
+    """ "About the artist" returns a biography string, not a track list."""
     adapter, _ = adapter_factory()
     candidates = adapter.related("vid-complete")
     assert [c.track.video_id for c in candidates] == ["vid-related-1"]

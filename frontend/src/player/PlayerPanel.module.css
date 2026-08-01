@@ -1,5 +1,6 @@
 .panel {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4);
@@ -38,7 +39,12 @@
 }
 
 .meta {
+  min-width: 0;
   color: var(--text-secondary);
+}
+
+.meta > p {
+  overflow-wrap: anywhere;
 }
 
 .title {

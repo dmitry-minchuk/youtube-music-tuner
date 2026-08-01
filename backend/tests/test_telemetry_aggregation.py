@@ -322,3 +322,26 @@ def test_replay_is_recorded() -> None:
     summary = summarize(build([with_duration(200, playedSeconds=190), {"type": "replay_started"}]))
     assert summary.replayed is True
     assert summary.reward is not None and summary.reward > 0.6
+
+
+def test_player_error_terminates_as_player_error_not_a_skip() -> None:
+    """An unplayable track (embedding disabled) must not look like rejection."""
+    summary = summarize(build([with_duration(200, playedSeconds=0), {"type": "player_error"}]))
+    assert summary.termination_reason == "player_error"
+    assert summary.early_skip is False
+    assert summary.mid_skip is False
+    assert summary.qualified is False
+    assert summary.reward is None
+
+
+def test_an_error_followed_by_a_real_next_still_counts_the_next() -> None:
+    summary = summarize(
+        build(
+            [
+                with_duration(200, playedSeconds=8),
+                {"type": "player_error"},
+                {"type": "next_clicked"},
+            ]
+        )
+    )
+    assert summary.early_skip is True

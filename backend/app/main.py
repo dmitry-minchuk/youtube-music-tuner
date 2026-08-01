@@ -18,6 +18,7 @@ from app.api import (
     insights,
     library,
     publishing,
+    settings_api,
     system,
     telemetry,
     wave,
@@ -94,6 +95,7 @@ def create_app(settings: Settings | None = None, *, scheduler_enabled: bool = Tr
     app.include_router(insights.router)
     app.include_router(publishing.router)
     app.include_router(connect.router)
+    app.include_router(settings_api.router)
 
     _mount_frontend(app)
     return app

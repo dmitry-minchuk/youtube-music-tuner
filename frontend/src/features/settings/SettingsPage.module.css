@@ -39,3 +39,50 @@
   padding-top: var(--space-4);
   border-top: 1px solid var(--border-soft);
 }
+
+.toggleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+}
+
+.toggleRow + .toggleRow {
+  align-items: center;
+  border-top: 1px solid var(--border-soft);
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+}
+
+.toggleRow input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--coral-500);
+}
+
+.toggleRow input[type="range"] {
+  flex: 1;
+  max-width: 260px;
+  accent-color: var(--teal-500);
+}
+
+.toggleTitle {
+  display: block;
+  font-weight: 500;
+}
+
+.toggleHint {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.toggleValue {
+  min-width: 28px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}

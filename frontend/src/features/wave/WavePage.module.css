@@ -1,8 +1,22 @@
+/* Fixed columns keep the label, slider and button on one baseline instead
+   of drifting apart as the window changes. */
 .controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  display: grid;
+  align-items: end;
   gap: var(--space-5);
+  grid-template-columns: minmax(160px, auto) minmax(240px, 1fr) auto;
+}
+
+@media (max-width: 1279px) {
+  .controls {
+    grid-template-columns: minmax(140px, auto) minmax(0, 1fr);
+    row-gap: var(--space-4);
+  }
+
+  .controls > :last-child {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
 
 .label {
@@ -27,8 +41,7 @@
 }
 
 .temperature {
-  min-width: 280px;
-  flex: 1 1 320px;
+  min-width: 0;
 }
 
 .temperatureLabels {
@@ -51,7 +64,7 @@
 }
 
 .learning {
-  margin-top: var(--space-4);
+  margin-top: var(--space-5);
   color: var(--text-muted);
   font-size: 0.85rem;
 }
@@ -149,4 +162,17 @@
   .reason {
     display: none;
   }
+}
+
+.retuning {
+  color: var(--text-muted);
+}
+
+.queue[aria-busy="true"] {
+  opacity: 0.6;
+  transition: opacity var(--transition);
+}
+
+.queueRow:active {
+  transform: scale(0.995);
 }

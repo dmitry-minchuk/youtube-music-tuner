@@ -160,6 +160,10 @@ def fold_event(acc: SessionAccumulator, event: dict[str, Any]) -> SessionAccumul
         acc.seek_backward_count = max(acc.seek_backward_count, 1)
     elif event_type == "seek_forward":
         acc.seek_forward_count = max(acc.seek_forward_count, 1)
+    elif event_type == "player_error" and acc.termination_reason is None:
+        # Recorded so the track lands in the 24h playback-error cooldown
+        # (docs/05 section 4) — never as a skip.
+        acc.termination_reason = "player_error"
     elif event_type == "page_closing" and acc.termination_reason is None:
         acc.termination_reason = "abandoned_unknown"
 
