@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: youtube-music-tuner
+Version: 0.1.0
+Summary: Local personal music player and recommender on top of YouTube Music
+Requires-Python: >=3.13
+Requires-Dist: fastapi==0.118.0
+Requires-Dist: uvicorn[standard]==0.37.0
+Requires-Dist: pydantic==2.11.9
+Requires-Dist: pydantic-settings==2.11.0
+Requires-Dist: SQLAlchemy==2.0.43
+Requires-Dist: alembic==1.16.5
+Requires-Dist: ytmusicapi==1.12.1
+Requires-Dist: numpy==2.3.3
+Provides-Extra: dev
+Requires-Dist: pytest==8.4.2; extra == "dev"
+Requires-Dist: httpx==0.28.1; extra == "dev"
+Requires-Dist: ruff==0.14.0; extra == "dev"
+Requires-Dist: mypy==1.18.2; extra == "dev"

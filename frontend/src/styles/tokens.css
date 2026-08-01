@@ -1,0 +1,59 @@
+/* Visual identity from docs/06 section 1: graphite (not pure black),
+   warm coral for primary actions, cool teal for discovery/temperature. */
+:root {
+  color-scheme: dark;
+
+  --graphite-900: #16181c;
+  --graphite-850: #1b1e23;
+  --graphite-800: #212530;
+  --graphite-700: #2a2f3a;
+  --graphite-600: #363c49;
+
+  --coral-500: #ff6f5e;
+  --coral-400: #ff8b7c;
+  --coral-dim: rgba(255, 111, 94, 0.16);
+
+  --teal-500: #3fc4c0;
+  --teal-400: #63d6d2;
+  --teal-dim: rgba(63, 196, 192, 0.16);
+
+  --text-primary: #f2f4f7;
+  --text-secondary: #b3bac6;
+  --text-muted: #8a92a1;
+
+  --danger: #ff5f56;
+  --warning: #f0b849;
+  --success: #5fd08a;
+
+  --surface: var(--graphite-850);
+  --surface-raised: var(--graphite-800);
+  --surface-sunken: var(--graphite-900);
+  --border-soft: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  --hit-target: 40px;
+  --shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --transition: 160ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition: 0ms;
+  }
+}

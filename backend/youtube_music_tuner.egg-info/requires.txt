@@ -1,0 +1,14 @@
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+pydantic==2.11.9
+pydantic-settings==2.11.0
+SQLAlchemy==2.0.43
+alembic==1.16.5
+ytmusicapi==1.12.1
+numpy==2.3.3
+
+[dev]
+pytest==8.4.2
+httpx==0.28.1
+ruff==0.14.0
+mypy==1.18.2

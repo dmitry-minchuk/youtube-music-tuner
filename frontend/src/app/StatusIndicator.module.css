@@ -1,0 +1,30 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--graphite-800);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal-500);
+}
+
+.warn {
+  border-color: rgba(240, 184, 73, 0.4);
+  color: var(--warning);
+}
+
+.warn::before {
+  background: var(--warning);
+}
