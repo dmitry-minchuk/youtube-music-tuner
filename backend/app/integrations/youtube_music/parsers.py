@@ -231,13 +231,22 @@ def parse_watch_playlist(
 
 
 def parse_related_sections(raw: Any, source_key: str) -> list[TrackCandidate]:
-    """``get_song_related`` returns shelves; only song shelves are useful."""
+    """``get_song_related`` returns shelves; only song shelves are useful.
+
+    Shelves are heterogeneous: alongside track lists YouTube returns things
+    like "About the artist", whose ``contents`` is a biography string. A
+    non-list shelf is a normal shape, not a broken payload, so it is skipped
+    rather than treated as a parse failure.
+    """
     candidates: list[TrackCandidate] = []
     rank = 0
     for section in _as_list(raw, "related sections"):
         if not isinstance(section, dict):
             continue
-        for entry in _as_list(section.get("contents"), "related contents"):
+        contents = section.get("contents")
+        if not isinstance(contents, list):
+            continue
+        for entry in contents:
             if not isinstance(entry, dict) or not entry.get("videoId"):
                 continue
             try:

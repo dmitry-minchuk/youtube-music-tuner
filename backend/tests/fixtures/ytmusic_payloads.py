@@ -168,6 +168,9 @@ SONG_RELATED: list[dict[str, Any]] = [
     },
     # Non-song shelves (artists, albums) must be ignored.
     {"title": "Similar artists", "contents": [{"title": "Theta", "browseId": "UCtheta"}]},
+    # Seen live: "About the artist" carries biography text, not a list.
+    {"title": "About the artist", "contents": "Iota is a band formed in 2011..."},
+    {"title": "Broken shelf without contents"},
 ]
 
 SONG_RELATED_EMPTY: list[dict[str, Any]] = []

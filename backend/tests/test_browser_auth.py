@@ -25,11 +25,16 @@ accept: */*
 accept-language: en-US,en;q=0.9
 authorization: SAPISIDHASH 1700000000_abc
 content-type: application/json
-cookie: VISITOR_INFO1_LIVE=abc; SID=def; HSID=ghi; SAPISID=jkl
+cookie: VISITOR_INFO1_LIVE=abc; SID=def; HSID=ghi; SAPISID=jkl; __Secure-3PAPISID=mno
 origin: https://music.youtube.com
 user-agent: Mozilla/5.0
 x-goog-authuser: 0
 """
+
+# Same paste, but the authorization header was lost while copying.
+CHROME_PASTE_NO_AUTH = "\n".join(
+    line for line in CHROME_PASTE.splitlines() if not line.startswith("authorization:")
+)
 
 
 def make_settings(tmp_path) -> Settings:
@@ -40,7 +45,7 @@ def make_settings(tmp_path) -> Settings:
 
 def test_headers_pasted_from_chrome_are_parsed() -> None:
     headers = parse_browser_headers(CHROME_PASTE)
-    assert "SAPISID=jkl" in headers["cookie"]
+    assert "__Secure-3PAPISID=mno" in headers["cookie"]
     assert headers["user-agent"] == "Mozilla/5.0"
     # HTTP/2 pseudo-headers must not leak into the stored set.
     assert not any(name.startswith(":") for name in headers)
@@ -121,3 +126,46 @@ def test_adapter_without_credentials_raises_auth_error(tmp_path) -> None:
     adapter = YouTubeMusicAdapter(make_settings(tmp_path))
     with pytest.raises(AuthError):
         _ = adapter.client
+
+
+def test_authorization_header_is_derived_from_the_cookie() -> None:
+    """ytmusicapi only recognises browser auth via a SAPISIDHASH header."""
+    from app.integrations.youtube_music.auth import ensure_authorization_header
+
+    headers = ensure_authorization_header(parse_browser_headers(CHROME_PASTE_NO_AUTH))
+    assert headers["authorization"].startswith("SAPISIDHASH ")
+    assert headers["origin"] == "https://music.youtube.com"
+
+
+def test_existing_authorization_header_is_kept() -> None:
+    from app.integrations.youtube_music.auth import ensure_authorization_header
+
+    original = "SAPISIDHASH 1700000000_original"
+    headers = ensure_authorization_header(
+        {
+            "cookie": "__Secure-3PAPISID=mno",
+            "authorization": original,
+            "origin": "https://music.youtube.com",
+        }
+    )
+    assert headers["authorization"] == original
+
+
+def test_cookie_without_sapisid_is_rejected() -> None:
+    from app.integrations.youtube_music.auth import ensure_authorization_header
+
+    with pytest.raises(ValueError) as excinfo:
+        ensure_authorization_header({"cookie": "VISITOR_INFO1_LIVE=abc"})
+    assert "__Secure-3PAPISID" in str(excinfo.value)
+
+
+def test_ytmusicapi_classifies_the_enriched_headers_as_browser_auth() -> None:
+    """Guards the exact rule in ytmusicapi's determine_auth_type."""
+    from requests.structures import CaseInsensitiveDict
+    from ytmusicapi.auth.auth_parse import determine_auth_type
+    from ytmusicapi.auth.types import AuthType
+
+    from app.integrations.youtube_music.auth import ensure_authorization_header
+
+    headers = ensure_authorization_header(parse_browser_headers(CHROME_PASTE_NO_AUTH))
+    assert determine_auth_type(CaseInsensitiveDict(headers)) is AuthType.BROWSER

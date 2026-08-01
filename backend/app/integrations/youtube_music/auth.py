@@ -108,6 +108,39 @@ def parse_browser_headers(raw: str) -> dict[str, str]:
     return headers
 
 
+def ensure_authorization_header(headers: dict[str, str]) -> dict[str, str]:
+    """Add the SAPISIDHASH authorization header when only cookies were pasted.
+
+    ytmusicapi classifies a header set as browser auth only if it carries an
+    ``authorization`` value containing ``SAPISIDHASH``; without it the file is
+    mistaken for an OAuth token. Browsers do send that header, but it is easy
+    to lose when copying, so derive it from the cookie. The value is
+    recomputed by ytmusicapi on every request, so a stale timestamp here is
+    harmless.
+    """
+    enriched = dict(headers)
+    existing = enriched.get("authorization", "")
+    if "SAPISIDHASH" in existing:
+        return enriched
+
+    cookie = enriched.get("cookie", "")
+    origin = enriched.get("origin") or enriched.get("x-origin") or "https://music.youtube.com"
+
+    from ytmusicapi.helpers import get_authorization, sapisid_from_cookie
+
+    try:
+        sapisid = sapisid_from_cookie(cookie)
+    except KeyError as exc:
+        raise ValueError(
+            "the pasted cookie has no __Secure-3PAPISID; copy the headers again "
+            "from a signed-in music.youtube.com tab"
+        ) from exc
+
+    enriched["authorization"] = get_authorization(f"{sapisid} {origin}")
+    enriched.setdefault("origin", origin)
+    return enriched
+
+
 def browser_auth_present(settings: Settings) -> bool:
     data = _readable_json(settings.browser_auth_file)
     return bool(data and data.get("Cookie") or data and data.get("cookie"))

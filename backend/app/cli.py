@@ -16,6 +16,7 @@ from pathlib import Path
 
 from app.integrations.youtube_music.auth import (
     SECRET_FILE_MODE,
+    ensure_authorization_header,
     ensure_secrets_dir,
     normalize_client_payload,
     parse_browser_headers,
@@ -62,7 +63,7 @@ def cmd_browser_import(args: argparse.Namespace, settings: Settings) -> int:
     raw_text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
 
     try:
-        parse_browser_headers(raw_text)
+        headers = ensure_authorization_header(parse_browser_headers(raw_text))
     except ValueError as exc:
         _print({"status": "error", "message": str(exc)})
         return 2
@@ -70,7 +71,8 @@ def cmd_browser_import(args: argparse.Namespace, settings: Settings) -> int:
     ensure_secrets_dir(settings)
     from ytmusicapi import setup as ytmusic_setup
 
-    ytmusic_setup(filepath=str(settings.browser_auth_file), headers_raw=raw_text)
+    normalized = "\n".join(f"{name}: {value}" for name, value in sorted(headers.items()))
+    ytmusic_setup(filepath=str(settings.browser_auth_file), headers_raw=normalized)
     settings.browser_auth_file.chmod(SECRET_FILE_MODE)
 
     # Prove the credentials work before reporting success.
