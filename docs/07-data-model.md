@@ -193,7 +193,7 @@ Ledger используется для бюджета и диагностики,
 - raw telemetry events — 180 дней;
 - playback session summaries — бессрочно до ручного удаления;
 - api call ledger — 90 дней;
-- failed job detail — 30 дней;
+- failed job detail — 30 дней; успешные jobs — 7 дней;
 - candidate edges — удаляются, если не обновлялись год; `expires_at` их не удаляет (§4);
 - feature snapshots — 180 дней, синхронно с raw telemetry, после чего online update опирается на сохранённые session/model aggregates;
 - playlist backups — последние 30 snapshots на managed playlist;

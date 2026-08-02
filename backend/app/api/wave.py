@@ -49,6 +49,10 @@ def serialize(result: WaveResult) -> dict[str, Any]:
             "actualFamiliarPercent": result.actual_familiar_percent,
             "actualDiscoveryPercent": 100 - result.actual_familiar_percent,
         },
+        "freshness": {
+            "poolSize": result.pool_size,
+            "overlapPreviousPercent": result.overlap_previous_percent,
+        },
         "relaxations": list(result.relaxations),
         "items": [
             {
