@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain.catalog import CandidateSource, TrackCandidate
+from app.integrations.youtube_music.ledger import DISCOVERY_CALLS_PER_DAY
 from app.jobs.graph_expand import run_graph_expansion
 from app.persistence.models import (
     ApiCallLedger,
@@ -188,7 +189,7 @@ def test_expansion_stops_when_the_discovery_budget_is_spent(db_session, fake_cat
     fake_catalog.candidates = {"near": [candidate("far-1")]}
 
     now = utcnow()
-    for index in range(60):
+    for index in range(DISCOVERY_CALLS_PER_DAY):
         db_session.add(
             ApiCallLedger(
                 provider="ytmusic",
@@ -225,3 +226,33 @@ def test_expansion_grows_the_pool_across_runs(db_session, fake_catalog) -> None:
     after = len(build_support(db_session))
 
     assert after > before
+
+
+# -- breadth before depth --------------------------------------------------
+
+
+def test_an_unexplored_favourite_outranks_a_well_supported_candidate(db_session) -> None:
+    """A like nobody's radio mentions is absent from support entirely, so it
+    could never be picked — and the walk kept deepening one cluster."""
+    add_track(db_session, "root", liked=True)
+    add_track(db_session, "lonely-like", liked=True)
+    add_track(db_session, "popular")
+    for index in range(4):
+        add_track(db_session, f"other-root-{index}", liked=True)
+        add_edge(db_session, f"other-root-{index}", "popular")
+    add_edge(db_session, "root", "popular")
+
+    nodes = frontier(db_session, limit=10)
+    assert nodes[0].video_id == "lonely-like"
+    assert "popular" in {node.video_id for node in nodes}
+
+
+def test_every_favourite_gets_explored_before_going_deeper(db_session) -> None:
+    for index in range(6):
+        add_track(db_session, f"like-{index}", liked=True)
+    add_track(db_session, "reached")
+    add_edge(db_session, "like-0", "reached")
+
+    ids = [node.video_id for node in frontier(db_session, limit=10)]
+    unexplored_likes = {f"like-{index}" for index in range(1, 6)}
+    assert set(ids[: len(unexplored_likes)]) == unexplored_likes

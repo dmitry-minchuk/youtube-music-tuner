@@ -45,8 +45,12 @@ QUOTA_BONUS = 0.30
 DIVERSITY_WINDOW = 8
 
 # Stochastic selection: sample from this many leading candidates, with a
-# softness that grows with temperature.
+# softness that grows with temperature. The window widens with the pool —
+# drawing from a fixed twelve out of two thousand candidates converges on the
+# same handful of artists no matter how large the graph gets.
 SELECTION_TOP_K = 12
+SELECTION_TOP_K_MAX = 64
+SELECTION_POOL_DIVISOR = 25
 SELECTION_TAU_MIN = 0.05
 SELECTION_TAU_MAX = 0.22
 
@@ -177,7 +181,8 @@ def _pick(
     if rng is None or len(scored) == 1:
         return scored[0][1]
 
-    top = scored[:SELECTION_TOP_K]
+    width = min(SELECTION_TOP_K_MAX, max(SELECTION_TOP_K, len(scored) // SELECTION_POOL_DIVISOR))
+    top = scored[:width]
     leader = top[0][0]
     weights = [math.exp(min(0.0, (value - leader)) / tau) for value, _ in top]
     total = sum(weights)

@@ -90,6 +90,11 @@ HISTORY_PENALTY: tuple[float, ...] = (0.90, 0.45, 0.22, 0.10)
 # without repeating — so the same penalty would empty the familiar quota
 # after a few restarts. Repeating a liked track is not the complaint.
 FAMILIAR_HISTORY_PENALTY: tuple[float, ...] = (0.20, 0.10, 0.05, 0.02)
+# Avoiding repeated *tracks* is not enough: with a large pool the ranker still
+# converged on the same eighty artists, which is what "every wave sounds the
+# same" actually means. Artists heard in recent waves step back so the rest of
+# the graph gets a turn. Likes are exempt — they are the point of the quota.
+ARTIST_HISTORY_PENALTY: tuple[float, ...] = (0.35, 0.22, 0.12, 0.06)
 
 PLAYBACK_ERROR_COOLDOWN = dt.timedelta(hours=24)
 REDISCOVERY_DAYS = 60
@@ -284,6 +289,21 @@ def recent_generations(db: Session, depth: int = WAVE_HISTORY_DEPTH) -> list[set
     for generation_id, video_id in rows:
         grouped[generation_id].add(video_id)
     return [grouped[generation_id] for generation_id in generation_ids]
+
+
+def recent_generation_artists(db: Session, history: list[set[str]]) -> dict[str, int]:
+    """Primary artist -> how many waves ago it was last served."""
+    if not history:
+        return {}
+    everything = sorted({video_id for generation in history for video_id in generation})
+    artists = _primary_artists(db, everything)
+    position: dict[str, int] = {}
+    for index, generation in enumerate(history):
+        for video_id in generation:
+            artist = artists.get(video_id)
+            if artist is not None:
+                position.setdefault(artist, index)
+    return position
 
 
 def _primary_artists(db: Session, video_ids: list[str]) -> dict[str, str]:
@@ -503,6 +523,8 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         familiar_target=familiar_target,
     )
 
+    artist_history = {} if request.for_publishing else recent_generation_artists(db, history)
+
     tracks = {video_id: playable[video_id] for video_id in freshness.ids}
     affinities = {
         row.video_id: row
@@ -594,6 +616,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         penalties = FAMILIAR_HISTORY_PENALTY if familiar else HISTORY_PENALTY
         if history_position is not None and history_position < len(penalties):
             score -= penalties[history_position]
+
+        if not familiar and artist_id is not None:
+            artist_position = artist_history.get(artist_id)
+            if artist_position is not None and artist_position < len(ARTIST_HISTORY_PENALTY):
+                score -= ARTIST_HISTORY_PENALTY[artist_position]
 
         reasons = _reason_codes(
             familiar=familiar,

@@ -75,6 +75,15 @@ def select_seeds(db: Session, now: dt.datetime, rng: random.Random) -> list[str]
         row = affinity.get(video_id)
         return row.last_played_at if row and row.last_played_at else dt.datetime.min
 
+    # A favourite the graph has never been walked from contributes nothing to
+    # the pool, so it is explored before anything already covered.
+    explored = set(
+        db.scalars(select(CandidateEdge.seed_video_id).distinct()).all()
+    )
+    unexplored = [video for video in positives if video not in explored]
+    if unexplored:
+        positives = unexplored
+
     long_unplayed = sorted(positives, key=lambda video: (last_played(video), video))[:2]
 
     fresh_discovery = list(

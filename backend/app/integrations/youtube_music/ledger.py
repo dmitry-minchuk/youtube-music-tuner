@@ -26,8 +26,12 @@ PUBLISH_WINDOWS_PER_DAY = 1
 # both the daily seed refresh and the frontier expansion runs, so growing the
 # pool can never crowd out publishing (docs/03 section 9).
 DISCOVERY_OPERATIONS = frozenset({"get_watch_playlist", "get_song_related"})
-DISCOVERY_CALLS_PER_DAY = 60
-GRAPH_EXPAND_CALLS_PER_RUN = 8
+# Read-only and cheap. The ceiling exists so a runaway loop cannot hammer
+# YouTube, not to ration exploration: covering every favourite once already
+# costs one call per like, and a library of sixty would otherwise take two
+# days to represent at all.
+DISCOVERY_CALLS_PER_DAY = 120
+GRAPH_EXPAND_CALLS_PER_RUN = 12
 
 # Per publish window, per playlist.
 MAX_ITEM_CHANGES_PER_WINDOW = 15

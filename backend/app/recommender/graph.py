@@ -45,6 +45,10 @@ STRONG_POSITIVE_REWARD = 0.4
 
 SUPPORT_SATURATION = 5.0
 
+# Breadth before depth: an unexplored favourite outranks any candidate the
+# graph already reached, however well supported.
+ROOT_PRIORITY = 1e6
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateSupport:
@@ -192,6 +196,7 @@ def frontier(
     """
     support = support if support is not None else build_support(db)
     expanded = set(db.scalars(select(CandidateEdge.seed_video_id).distinct()).all())
+    roots = positive_roots(db)
     disliked = set(
         db.scalars(
             select(LibraryTrackState.video_id).where(LibraryTrackState.is_disliked.is_(True))
@@ -209,8 +214,21 @@ def frontier(
     )
 
     nodes: list[FrontierNode] = []
+
+    # Every track you like is an anchor of your taste and the most valuable
+    # place to explore from — but a like nobody's radio happens to mention is
+    # absent from `support` entirely, so it could never be picked. Unexplored
+    # roots therefore come first, ahead of anything the graph already reached.
+    # Without this the walk deepens one cluster and the rest of the library is
+    # never represented, which is exactly what "every wave sounds the same"
+    # feels like from the outside.
+    for video_id in sorted(roots - expanded - disliked):
+        nodes.append(FrontierNode(video_id=video_id, hop=0, priority=ROOT_PRIORITY))
+
     for row in support.values():
         if row.video_id in expanded or row.video_id in disliked or row.video_id in negative:
+            continue
+        if row.video_id in roots:
             continue
         if row.min_hop >= max_hop:
             continue

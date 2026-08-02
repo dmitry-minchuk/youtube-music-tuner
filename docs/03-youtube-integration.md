@@ -169,8 +169,10 @@ Rollback — отдельная ручная операция из backup. Ав�
 | --- | --- |
 | Полный library sync | 4 раза в сутки |
 | Candidate refresh | 1 раз в сутки, максимум 6 seed |
-| Frontier expansion графа | каждые 6 часов, максимум 8 узлов за прогон (по 1 вызову radio) |
-| Все discovery-вызовы (`get_watch_playlist`, `get_song_related`) | максимум 60 в сутки суммарно; расширение графа никогда не вытесняет публикацию |
+| Frontier expansion графа | каждые 6 часов, максимум 12 узлов за прогон (по 1 вызову radio) |
+| Все discovery-вызовы (`get_watch_playlist`, `get_song_related`) | максимум 120 в сутки суммарно; расширение графа никогда не вытесняет публикацию |
+
+Потолок discovery-вызовов существует, чтобы зациклившийся job не долбил YouTube, а не чтобы экономить на исследовании: покрыть каждый лайк хотя бы одним запросом стоит один вызов на трек, и при шестидесяти корнях меньший лимит растянул бы представление всего вкуса на двое суток.
 | Remote publish | 1 publish-окно в сутки |
 | Первичное создание managed playlist | один подтверждённый create с максимум `configured_target_size` initial IDs и один verify read; максимум 2 playlist-endpoint requests на playlist |
 | Последующие item changes одного managed playlist | максимум 15 логических item changes за окно |
