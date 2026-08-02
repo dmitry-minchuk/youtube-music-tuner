@@ -10,6 +10,7 @@ import {
   useSetupPlaylists,
   type Kind,
   type PlanResponse,
+  type SetupResult,
 } from "@/api/publishing";
 import { Button } from "@/ui/Button";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
@@ -46,6 +47,28 @@ function publishError(error: unknown): string {
     return error.message;
   }
   return "Could not reach the local API.";
+}
+
+/** A setup that skipped a playlist still returns 200, so say what happened. */
+function setupOutcome(result: SetupResult): string {
+  if (result.status === "SKIPPED_QUALITY") {
+    if (result.reasonCode === "INSUFFICIENT_POOL") {
+      const familiar = result.availableFamiliar ?? 0;
+      const discovery = result.availableDiscovery ?? 0;
+      return (
+        `not enough material yet (${familiar} familiar and ${discovery} discovery tracks pass ` +
+        `the quality bar, ${result.minimumPublishSize ?? 25} needed). Listen and like a little ` +
+        `more, then try again.`
+      );
+    }
+    const failures = result.gateFailures ?? [];
+    return failures.length
+      ? `skipped by quality gates: ${failures.map(describeGate).join("; ")}.`
+      : "skipped by quality gates.";
+  }
+  if (result.errorCode) return `failed (${result.errorCode}).`;
+  const size = result.effectiveTargetSize;
+  return size ? `created with ${size} tracks.` : `created (${result.status}).`;
 }
 
 function PlanSummary({ plan }: { plan: PlanResponse }): React.JSX.Element {
@@ -191,6 +214,15 @@ export function PlaylistsPage(): React.JSX.Element {
             <EmptyState message="Not created yet. Preview first, then create them in one confirmed step." />
           )}
           {setup.isError && <p className={styles.warn}>{publishError(setup.error)}</p>}
+          {setup.data && (
+            <ul className={styles.results}>
+              {setup.data.playlists.map((result) => (
+                <li key={result.kind}>
+                  <strong>{result.kind}</strong> — {setupOutcome(result)}
+                </li>
+              ))}
+            </ul>
+          )}
           {data && data.tunerPlaylists.length > 0 && (
             <ul className={styles.cards}>
               {data.tunerPlaylists.map((playlist) => (

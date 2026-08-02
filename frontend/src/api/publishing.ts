@@ -38,10 +38,23 @@ export function usePlanPlaylist() {
   });
 }
 
+export interface SetupResult {
+  kind: Kind;
+  status: string;
+  reasonCode?: string;
+  errorCode?: string | null;
+  effectiveTargetSize?: number;
+  minimumPublishSize?: number;
+  availableFamiliar?: number;
+  availableDiscovery?: number;
+  gateFailures?: string[];
+}
+
 export function useSetupPlaylists() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<{ playlists: unknown[] }>("/api/v1/managed-playlists/setup", {}),
+    mutationFn: () =>
+      api.post<{ playlists: SetupResult[] }>("/api/v1/managed-playlists/setup", {}),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["playlists"] }),
   });
 }

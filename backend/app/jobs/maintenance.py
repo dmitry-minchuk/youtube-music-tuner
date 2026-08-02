@@ -34,6 +34,8 @@ RAW_EVENT_RETENTION_DAYS = 180
 FEATURE_SNAPSHOT_RETENTION_DAYS = 180
 LEDGER_RETENTION_DAYS = 90
 FAILED_JOB_RETENTION_DAYS = 30
+# Finished work is only kept long enough to answer "when did this last run".
+COMPLETED_JOB_RETENTION_DAYS = 7
 CANDIDATE_EDGE_RETENTION_DAYS = 365
 BACKUP_RETENTION_DAYS = 14
 
@@ -150,6 +152,12 @@ def run_retention_cleanup(
         delete(Job).where(
             Job.status.in_(("FAILED", "CANCELLED")),
             Job.updated_at < now - dt.timedelta(days=FAILED_JOB_RETENTION_DAYS),
+        )
+    ).rowcount
+    failed_jobs += db.execute(
+        delete(Job).where(
+            Job.status == "SUCCEEDED",
+            Job.updated_at < now - dt.timedelta(days=COMPLETED_JOB_RETENTION_DAYS),
         )
     ).rowcount
 

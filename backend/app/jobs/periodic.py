@@ -24,6 +24,12 @@ class PeriodicJob:
     interval: dt.timedelta
 
 
+# A failed attempt still counts as an attempt. Without this the next poll
+# re-queues the job immediately, and because the scheduler does not sleep
+# after a job ran, a permanently failing job spins as fast as the CPU allows.
+FAILURE_BACKOFF = dt.timedelta(minutes=30)
+
+
 SCHEDULE: tuple[PeriodicJob, ...] = (
     PeriodicJob(queue.JOB_LIBRARY_SYNC, "library_sync", SYNC_TTL),
     PeriodicJob(queue.JOB_CANDIDATE_REFRESH, "candidate_refresh", dt.timedelta(days=1)),
@@ -41,6 +47,16 @@ def _last_run(db: Session, job_type: str) -> dt.datetime | None:
     return db.scalar(
         select(Job.finished_at)
         .where(Job.job_type == job_type, Job.status == "SUCCEEDED")
+        .order_by(Job.finished_at.desc())
+        .limit(1)
+    )
+
+
+def _last_attempt(db: Session, job_type: str) -> dt.datetime | None:
+    """When this job type last finished, whatever the outcome."""
+    return db.scalar(
+        select(Job.finished_at)
+        .where(Job.job_type == job_type, Job.finished_at.is_not(None))
         .order_by(Job.finished_at.desc())
         .limit(1)
     )
@@ -66,6 +82,12 @@ def enqueue_due_jobs(db: Session, now: dt.datetime | None = None) -> list[str]:
             last = snapshot or last
 
         if last is not None and now - last < entry.interval:
+            continue
+
+        # Training that produces no snapshot, and any failure, would otherwise
+        # leave `last` unchanged and re-queue the job on the very next poll.
+        attempt = _last_attempt(db, entry.job_type)
+        if attempt is not None and now - attempt < min(entry.interval, FAILURE_BACKOFF):
             continue
 
         try:

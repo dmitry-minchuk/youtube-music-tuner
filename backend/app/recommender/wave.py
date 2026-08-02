@@ -96,6 +96,13 @@ REDISCOVERY_DAYS = 60
 FATIGUE_WINDOW_DAYS = 7
 STRONG_POSITIVE_REWARD = 0.4
 
+# How much agreement between several liked seeds may lift a candidate above
+# its plain source rank.
+SUPPORT_BONUS = 0.5
+
+# Fatigue and skip penalties are scaled down this much for explicit likes.
+LIKED_PENALTY_SCALE = 0.35
+
 # A track you finished at least once and still feel warm about counts as
 # familiar even without a like — otherwise the familiar quota keeps recycling
 # the same handful of likes.
@@ -113,6 +120,12 @@ class WaveRequest:
     length: int = 40
     exclude_video_ids: frozenset[str] = frozenset()
     random_seed: int | None = None
+    # A published playlist is a snapshot, not a stream: it is read whenever
+    # the listener opens it, so it must be the best selection available
+    # rather than one that differs from yesterday's. The freshness machinery
+    # — recency windows, wave history, the rotation cap — is skipped for it,
+    # otherwise the very tracks the familiar quota needs are held back.
+    for_publishing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,17 +343,21 @@ def _build_features(
             days = (now - affinity.last_played_at).days
             if days >= REDISCOVERY_DAYS:
                 rediscovery = min(1.0, days / 365)
-        # Recent repetition tires the ear — but a track you deliberately
-        # liked is one you asked to hear often, so it tires more slowly.
+        # Recent repetition tires the ear.
         fatigue = min(0.30, 0.10 * affinity.plays_7d)
-        if liked:
-            fatigue *= 0.4
         if affinity.last_skipped_at is not None:
             skipped_days = (now - affinity.last_skipped_at).days
             if skipped_days <= FATIGUE_WINDOW_DAYS:
                 recent_skip = 0.25
             # Every skip beyond the first keeps counting even after the week.
             recent_skip += min(0.25, 0.08 * max(0, affinity.skips - 1))
+        if liked:
+            # A track you deliberately liked is one you asked to hear often,
+            # and skipping it usually means "not right now" rather than "not
+            # this track". At full strength these two penalties pushed most
+            # favourites below the publishing quality floor.
+            fatigue *= LIKED_PENALTY_SCALE
+            recent_skip *= LIKED_PENALTY_SCALE
 
     # High temperature values novelty, low temperature values the familiar.
     novelty_weighted = novelty * (temperature / 100)
@@ -475,8 +492,8 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
 
     familiar_pool = (liked | strong_positive | warm) & set(playable)
     familiar_target = familiar_target_count(request.temperature, request.length)
-    window = recency_window(pool_size)
-    history = recent_generations(db)
+    window = 0 if request.for_publishing else recency_window(pool_size)
+    history = [] if request.for_publishing else recent_generations(db)
     freshness = _apply_freshness(
         pool=set(playable),
         familiar_pool=familiar_pool,
@@ -509,13 +526,24 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         seed_video_id = support.best_seed if support else None
         rank = support.best_rank if support else 1
         if video_id in liked:
+            # A like is a root of the graph, not a candidate reached from one.
+            # Turning up at position fifteen of some other track's radio must
+            # not discount it — that used to push most favourites below the
+            # publishing quality floor.
             source_type = "LIKED"
+            support = None
+            rank = 1
 
         artist_id = primary_artists.get(video_id)
         artist_row = artist_affinity_rows.get(artist_id) if artist_id else None
         artist_affinity = min(1.0, max(0.0, artist_row.decayed_reward)) if artist_row else 0.0
-        # Support from several liked seeds beats a single strong edge.
-        seed_affinity = support.support_score if support else 1.0
+        # Position in the source list stays the base signal; agreement between
+        # several liked seeds is a bonus on top. Replacing one with the other
+        # shifts the whole score scale and breaks the shared quality floor.
+        rank_affinity = 1.0 / (1.0 + max(0, rank - 1) * 0.1)
+        seed_affinity = rank_affinity
+        if support is not None:
+            seed_affinity = min(1.0, rank_affinity * (1.0 + SUPPORT_BONUS * support.support_score))
 
         features = _build_features(
             source_type=source_type,
@@ -594,7 +622,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     candidates.sort(key=lambda item: (-item.score, item.video_id))
 
     available_familiar = sum(1 for item in candidates if item.familiar)
-    rotation_cap = int(available_familiar * rotation_share(request.temperature))
+    rotation_cap = (
+        available_familiar
+        if request.for_publishing
+        else int(available_familiar * rotation_share(request.temperature))
+    )
     effective_target = min(familiar_target, rotation_cap)
 
     reranked = rerank(

@@ -67,6 +67,25 @@
   font-size: 0.85rem;
 }
 
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(11, 14, 18, 0.22);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  list-style: none;
+}
+
+.results strong {
+  color: var(--text-primary);
+}
+
 .muted {
   color: var(--text-muted);
 }

@@ -23,6 +23,23 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 5.0
 
+# Draining a backlog without sleeping is fine, spinning is not: after this
+# many consecutive runs the loop takes its normal pause regardless.
+MAX_CONSECUTIVE_RUNS = 20
+
+# Only these reach YouTube. Training, cleanup, backup and the affinity
+# rollup are entirely local, so an open circuit is no reason to defer them —
+# doing so used to turn every poll into a failed job row.
+EXTERNAL_JOB_TYPES = frozenset(
+    {
+        queue.JOB_LIBRARY_SYNC,
+        queue.JOB_CANDIDATE_REFRESH,
+        queue.JOB_GRAPH_EXPAND,
+        queue.JOB_PLAYLIST_PUBLISH,
+        queue.JOB_RATING_SYNC,
+    }
+)
+
 
 def worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
@@ -38,7 +55,7 @@ def run_once(settings: Settings, catalog_factory=None) -> bool:
             return False
 
         circuit = CallBudget(session).circuit_state()
-        if circuit.open:
+        if circuit.open and job.job_type in EXTERNAL_JOB_TYPES:
             queue.fail(session, job, f"CIRCUIT_OPEN:{circuit.reason}")
             logger.info(
                 "job deferred, circuit open",
@@ -62,6 +79,7 @@ def run_once(settings: Settings, catalog_factory=None) -> bool:
 
 
 async def scheduler_loop(settings: Settings, catalog_factory=None) -> None:
+    consecutive = 0
     while True:
         try:
             ran = await asyncio.to_thread(run_once, settings, catalog_factory)
@@ -69,6 +87,15 @@ async def scheduler_loop(settings: Settings, catalog_factory=None) -> None:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive any job failure
             logger.exception("scheduler iteration failed")
+            ran = False
+
+        consecutive = consecutive + 1 if ran else 0
+        if consecutive >= MAX_CONSECUTIVE_RUNS:
+            logger.warning(
+                "scheduler ran %d jobs back to back, pausing", consecutive,
+                extra={"operation": "scheduler"},
+            )
+            consecutive = 0
             ran = False
         await asyncio.sleep(0 if ran else POLL_INTERVAL_SECONDS)
 
