@@ -274,12 +274,21 @@ def reconcile_setup(
     return SetupResult(manifest.managed_playlist_id, None, "CREATING", len(desired))
 
 
+DELETABLE_STATUSES = frozenset({"UNVERIFIED", "CLEANUP_REQUIRED", "ACTIVE"})
+
+
 def cleanup_setup_artifact(
     db: Session, manifest: ManagedPlaylist, catalog: MusicCatalogPort
 ) -> str:
-    """Delete only our own unverified artifact, after a fresh marker check."""
-    if manifest.status not in {"UNVERIFIED", "CLEANUP_REQUIRED"}:
-        raise OwnershipError("only an unverified setup artifact may be deleted")
+    """Delete one of our own playlists, after a fresh marker check.
+
+    ACTIVE is deletable too: it is the listener's own playlist and the marker
+    check still guarantees Tuner never touches anything it did not create.
+    Refusing meant a playlist you disliked could not be removed from the app
+    at all.
+    """
+    if manifest.status not in DELETABLE_STATUSES:
+        raise OwnershipError("only a Tuner-owned playlist may be deleted")
     if manifest.playlist_id is None:
         manifest.status = "DELETED"
         db.flush()

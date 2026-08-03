@@ -13,6 +13,7 @@ gates refused every playlist and the Create button appeared to do nothing.
 from __future__ import annotations
 
 import math
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -38,22 +39,45 @@ PLAYLIST_TEMPERATURES = {"FAMILIAR": 20, "BALANCE": 50, "DISCOVERY": 80}
 # library may need a stricter cap to reach the distinct-artist ratio.
 ARTIST_CAPS = (MAX_TRACKS_PER_ARTIST, 2, 1)
 
+# How much material to rank before choosing, as a multiple of the target size.
+POOL_MULTIPLIER = 6
+
+# Each pick is sampled from this many leading candidates.
+SELECTION_WINDOW = 20
+
 
 def _artist_of(item: WaveItem) -> str | None:
     return item.artists[0] if item.artists else None
 
 
 def _take(
-    items: Sequence[WaveItem], wanted: int, cap: int, used: dict[str, int]
+    items: Sequence[WaveItem],
+    wanted: int,
+    cap: int,
+    used: dict[str, int],
+    rng: random.Random | None = None,
 ) -> list[WaveItem] | None:
-    """Highest scoring tracks that keep every artist under the cap."""
+    """Strong tracks that keep every artist under the cap.
+
+    Sampled from the leading candidates rather than taken strictly in order:
+    always draining the top of the list made Regenerate return nearly the same
+    sixty tracks even with two hundred eligible ones to choose from.
+    """
     chosen: list[WaveItem] = []
-    for item in items:
-        if len(chosen) == wanted:
-            break
-        artist = _artist_of(item)
-        if artist is not None and used.get(artist, 0) >= cap:
+    remaining = list(items)
+    while remaining and len(chosen) < wanted:
+        window = remaining[:SELECTION_WINDOW] if rng is not None else remaining[:1]
+        admissible = [
+            (position, item)
+            for position, item in enumerate(window)
+            if _artist_of(item) is None or used.get(_artist_of(item) or "", 0) < cap
+        ]
+        if not admissible:
+            del remaining[: len(window)]
             continue
+        position, item = admissible[rng.randrange(len(admissible))] if rng else admissible[0]
+        remaining.pop(position)
+        artist = _artist_of(item)
         if artist is not None:
             used[artist] = used.get(artist, 0) + 1
         chosen.append(item)
@@ -93,7 +117,11 @@ def _arrange(chosen: list[WaveItem]) -> list[WaveItem]:
 
 
 def _compose(
-    items: Sequence[WaveItem], size: int, target_percent: int, cap: int
+    items: Sequence[WaveItem],
+    size: int,
+    target_percent: int,
+    cap: int,
+    rng: random.Random | None = None,
 ) -> list[WaveItem] | None:
     """A list of exactly ``size`` tracks that should satisfy every gate."""
     familiar_wanted = round(size * target_percent / 100)
@@ -101,12 +129,16 @@ def _compose(
 
     used: dict[str, int] = {}
     familiar = _take(
-        [item for item in items if item.familiarity == "FAMILIAR"], familiar_wanted, cap, used
+        [item for item in items if item.familiarity == "FAMILIAR"], familiar_wanted, cap, used, rng
     )
     if familiar is None:
         return None
     discovery = _take(
-        [item for item in items if item.familiarity != "FAMILIAR"], discovery_wanted, cap, used
+        [item for item in items if item.familiarity != "FAMILIAR"],
+        discovery_wanted,
+        cap,
+        used,
+        rng,
     )
     if discovery is None:
         return None
@@ -116,6 +148,17 @@ def _compose(
     if len(artists) < math.ceil(MIN_ARTIST_RATIO * size):
         return None
     return _arrange(chosen)
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewTrack:
+    """One row of the reviewable list."""
+
+    video_id: str
+    title: str
+    artists: tuple[str, ...]
+    familiarity: str
+    reason_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +177,8 @@ class DesiredListResult:
     skipped: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     gate_version: str = QUALITY_GATE_VERSION
+    tracks: tuple[PreviewTrack, ...] = ()
+    random_seed: int | None = None
 
 
 def build_desired_list(
@@ -143,18 +188,26 @@ def build_desired_list(
     configured_target_size: int = DEFAULT_TARGET_SIZE,
     comparable_remote_mean: float | None = None,
     score_policy_changed: bool = False,
+    random_seed: int | None = None,
 ) -> DesiredListResult:
     temperature = PLAYLIST_TEMPERATURES[kind]
     target_percent = familiar_quota(temperature)
 
-    # Generate a generous pool once, then choose the largest feasible size.
+    # A fixed seed per kind made Preview reproducible but also made it the only
+    # answer there ever was — asking again returned the same list. The caller
+    # now supplies a seed, so Regenerate can offer a genuinely different
+    # candidate while the reviewed one stays reproducible.
+    seed = random_seed if random_seed is not None else hash(kind) % (2**31)
+    rng = random.Random(seed)
     pool = generate_wave(
         db,
         WaveRequest(
             temperature=temperature,
             mood="ANY",
-            length=configured_target_size * 3,
-            random_seed=hash(kind) % (2**31),
+            # A generous pool: at three times the target the same handful of
+            # top-scoring tracks came back on every Regenerate.
+            length=configured_target_size * POOL_MULTIPLIER,
+            random_seed=seed,
             for_publishing=True,
         ),
     )
@@ -196,7 +249,7 @@ def build_desired_list(
     outcome = None
     for cap in ARTIST_CAPS:
         for attempt in range(size, MIN_PUBLISH_SIZE - 1, -1):
-            composed = _compose(eligible, attempt, target_percent, cap)
+            composed = _compose(eligible, attempt, target_percent, cap, rng)
             if composed is None:
                 continue
             candidate_outcome = evaluate(
@@ -232,10 +285,23 @@ def build_desired_list(
             score_policy_changed=score_policy_changed,
         )
 
+    tracks = tuple(
+        PreviewTrack(
+            video_id=item.video_id,
+            title=item.title,
+            artists=tuple(item.artists),
+            familiarity=item.familiarity,
+            reason_codes=tuple(item.reason_codes),
+        )
+        for item in selected
+    )
+
     return DesiredListResult(
         kind=kind,
         passed=outcome.passed,
         video_ids=tuple(item.video_id for item in selected) if outcome.passed else (),
+        tracks=tracks if outcome.passed else (),
+        random_seed=seed,
         configured_target_size=configured_target_size,
         effective_target_size=outcome.effective_target_size,
         minimum_publish_size=MIN_PUBLISH_SIZE,

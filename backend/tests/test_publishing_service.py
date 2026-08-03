@@ -167,13 +167,26 @@ def test_cleanup_deletes_only_an_unverified_artifact(db_session) -> None:
     assert manifest.playlist_id is None
 
 
-def test_cleanup_refuses_an_active_playlist(db_session) -> None:
+def test_an_active_playlist_can_be_deleted_on_request(db_session) -> None:
+    """It is the listener's own playlist: refusing left no way to remove one
+    they did not like. The marker check is what keeps others safe."""
     desired = ["a"]
     manifest = make_manifest(db_session, desired)
     catalog = SetupCatalog()
-    complete_setup(db_session, manifest, catalog, desired)
+    complete_setup(db_session, manifest, catalog, desired, sleep=lambda _: None)
     assert manifest.status == "ACTIVE"
 
+    assert cleanup_setup_artifact(db_session, manifest, catalog) == "DELETED"
+    assert catalog.deleted == ["PLcreated"]
+    assert manifest.playlist_id is None
+
+
+def test_cleanup_refuses_a_manifest_in_any_other_state(db_session) -> None:
+    manifest = make_manifest(db_session, ["a"])
+    manifest.status = "DELETED"
+    db_session.flush()
+
+    catalog = SetupCatalog()
     with pytest.raises(OwnershipError):
         cleanup_setup_artifact(db_session, manifest, catalog)
     assert catalog.deleted == []

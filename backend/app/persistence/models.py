@@ -125,6 +125,9 @@ class ManagedPlaylist(Base):
     configured_target_size: Mapped[int] = mapped_column(Integer, default=60)
     status: Mapped[str] = mapped_column(String(24), default="CREATING")
     accepted_desired_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    # The list shown in Preview, kept so that Publish writes exactly what was
+    # reviewed and so Regenerate can offer a different one on request.
+    proposed_desired_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     setup_started_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)
     setup_finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)
     setup_error_code: Mapped[str | None] = mapped_column(String(64), default=None)

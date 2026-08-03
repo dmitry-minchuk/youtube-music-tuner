@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
@@ -24,6 +25,7 @@ from app.persistence.models import (
     utcnow,
 )
 from app.publishing.desired_list import DesiredListResult, build_desired_list
+from app.publishing.quality_gates import MIN_PUBLISH_SIZE, QUALITY_GATE_VERSION
 from app.publishing.service import (
     PLAYLIST_KINDS,
     PUBLISH_WINDOW,
@@ -32,6 +34,7 @@ from app.publishing.service import (
     cleanup_setup_artifact,
     complete_setup,
     create_setup_intent,
+    desired_hash,
     publish_window,
     reconcile_setup,
 )
@@ -59,11 +62,23 @@ def _manifest(db: Session, kind: str) -> ManagedPlaylist:
     return manifest
 
 
+def _serialize_track(track: Any) -> dict[str, Any]:
+    return {
+        "videoId": track.video_id,
+        "title": track.title,
+        "artists": list(track.artists),
+        "familiarity": track.familiarity,
+        "reasonCodes": list(track.reason_codes),
+    }
+
+
 def _serialize_plan(result: DesiredListResult) -> dict[str, Any]:
     return {
         "configuredTargetSize": result.configured_target_size,
         "effectiveTargetSize": result.effective_target_size,
         "minimumPublishSize": result.minimum_publish_size,
+        "tracks": [_serialize_track(track) for track in result.tracks],
+        "randomSeed": result.random_seed,
         "requiredFamiliar": result.required_familiar,
         "availableFamiliar": result.available_familiar,
         "requiredDiscovery": result.required_discovery,
@@ -83,17 +98,77 @@ def _guard_budget(db: Session) -> None:
         raise errors.CircuitOpen(f"external calls are paused ({circuit.reason})")
 
 
+class PlanRequest(BaseModel):
+    regenerate: bool = False
+
+
+def _stored_proposal(db: Session, kind: str) -> dict[str, Any] | None:
+    manifest = db.scalar(select(ManagedPlaylist).where(ManagedPlaylist.kind == kind))
+    if manifest is None:
+        return None
+    stored = manifest.proposed_desired_json
+    return stored if isinstance(stored, dict) and stored.get("tracks") else None
+
+
+def _remember_proposal(db: Session, kind: str, result: DesiredListResult) -> None:
+    manifest = db.scalar(select(ManagedPlaylist).where(ManagedPlaylist.kind == kind))
+    if manifest is None or not result.passed:
+        return
+    manifest.proposed_desired_json = {
+        "randomSeed": result.random_seed,
+        "generatedAt": utcnow().isoformat() + "Z",
+        "configuredTargetSize": result.configured_target_size,
+        "effectiveTargetSize": result.effective_target_size,
+        "tracks": [_serialize_track(track) for track in result.tracks],
+    }
+    manifest.accepted_desired_hash = desired_hash(list(result.video_ids))
+    db.flush()
+
+
 @router.post("/{kind}/plan")
-def plan_playlist(kind: Kind, db: Session = Depends(get_session)) -> dict[str, Any]:
-    """Local diff preview — never calls YouTube."""
-    result = build_desired_list(db, kind)
-    body = _serialize_plan(result)
-    body["status"] = "READY" if result.passed else "SKIPPED_QUALITY"
+def plan_playlist(
+    kind: Kind,
+    body: PlanRequest | None = None,
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Local preview — never calls YouTube.
+
+    The reviewed list is remembered so Publish writes exactly what was shown.
+    Asking again returns that same list; ``regenerate`` replaces it with a
+    fresh candidate.
+    """
+    regenerate = bool(body.regenerate) if body is not None else False
+    stored = None if regenerate else _stored_proposal(db, kind)
+    if stored is not None:
+        return {
+            "status": "READY",
+            "configuredTargetSize": stored.get("configuredTargetSize", 0),
+            "effectiveTargetSize": stored.get("effectiveTargetSize", 0),
+            "minimumPublishSize": MIN_PUBLISH_SIZE,
+            "tracks": stored.get("tracks", []),
+            "randomSeed": stored.get("randomSeed"),
+            "generatedAt": stored.get("generatedAt"),
+            "requiredFamiliar": 0,
+            "availableFamiliar": 0,
+            "requiredDiscovery": 0,
+            "availableDiscovery": 0,
+            "gateVersion": QUALITY_GATE_VERSION,
+            "gateFailures": [],
+            "gateSkipped": [],
+            "reasonCodes": [],
+            "videoIds": [track["videoId"] for track in stored.get("tracks", [])],
+        }
+
+    seed = random.randrange(2**31) if regenerate else None
+    result = build_desired_list(db, kind, random_seed=seed)
+    _remember_proposal(db, kind, result)
+    body_out = _serialize_plan(result)
+    body_out["status"] = "READY" if result.passed else "SKIPPED_QUALITY"
     if not result.passed:
-        body["reasonCode"] = (
+        body_out["reasonCode"] = (
             "INSUFFICIENT_POOL" if result.effective_target_size == 0 else "QUALITY_GATE_FAILED"
         )
-    return body
+    return body_out
 
 
 class SetupRequest(BaseModel):
@@ -224,16 +299,24 @@ def publish(
     except BudgetExceeded as exc:
         raise errors.LocalBudgetExceeded(str(exc), budget=exc.budget, limit=exc.limit) from exc
 
-    desired_result = build_desired_list(db, kind)
-    if not desired_result.passed:
-        raise errors.PlaylistQualityFailed(
-            "the desired playlist did not pass the quality gates",
-            gateFailures=list(desired_result.failures),
-            **_serialize_plan(desired_result),
-        )
+    # Publish what was reviewed. Regenerating here would write a list the user
+    # never saw, which is the whole point of the preview step.
+    stored = _stored_proposal(db, kind)
+    if stored is not None:
+        desired = [track["videoId"] for track in stored.get("tracks", [])]
+    else:
+        desired_result = build_desired_list(db, kind)
+        if not desired_result.passed:
+            raise errors.PlaylistQualityFailed(
+                "the desired playlist did not pass the quality gates",
+                gateFailures=list(desired_result.failures),
+                **_serialize_plan(desired_result),
+            )
+        desired = list(desired_result.video_ids)
+        _remember_proposal(db, kind, desired_result)
 
     try:
-        publication = publish_window(db, manifest, catalog, list(desired_result.video_ids))
+        publication = publish_window(db, manifest, catalog, desired)
     except PlaylistNotVerified as exc:
         raise errors.PlaylistUnverified(str(exc)) from exc
     except OwnershipError as exc:

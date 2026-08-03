@@ -3,6 +3,14 @@ import { api } from "@/api/client";
 
 export type Kind = "FAMILIAR" | "BALANCE" | "DISCOVERY";
 
+export interface PlanTrack {
+  videoId: string;
+  title: string;
+  artists: string[];
+  familiarity: "FAMILIAR" | "DISCOVERY";
+  reasonCodes: string[];
+}
+
 export interface PlanResponse {
   status: "READY" | "SKIPPED_QUALITY";
   reasonCode?: string;
@@ -18,6 +26,9 @@ export interface PlanResponse {
   gateSkipped: string[];
   reasonCodes: string[];
   videoIds: string[];
+  tracks: PlanTrack[];
+  randomSeed?: number | null;
+  generatedAt?: string | null;
 }
 
 export interface PublicationResponse {
@@ -34,7 +45,8 @@ export interface PublicationResponse {
 
 export function usePlanPlaylist() {
   return useMutation({
-    mutationFn: (kind: Kind) => api.post<PlanResponse>(`/api/v1/managed-playlists/${kind}/plan`),
+    mutationFn: ({ kind, regenerate = false }: { kind: Kind; regenerate?: boolean }) =>
+      api.post<PlanResponse>(`/api/v1/managed-playlists/${kind}/plan`, { regenerate }),
   });
 }
 

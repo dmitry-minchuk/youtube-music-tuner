@@ -10,8 +10,10 @@ import {
   useSetupPlaylists,
   type Kind,
   type PlanResponse,
+  type PlanTrack,
   type SetupResult,
 } from "@/api/publishing";
+import { usePlayerStore } from "@/player/playerStore";
 import { Button } from "@/ui/Button";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
 import styles from "@/features/playlists/PlaylistsPage.module.css";
@@ -102,8 +104,26 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
   const reconcile = useReconcilePlaylist();
   const remove = useDeleteSetupArtifact();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const setQueue = usePlayerStore((store) => store.setQueue);
+  const playIndex = usePlayerStore((store) => store.playIndex);
 
   const isActive = playlist.status === "ACTIVE";
+  const previewTracks = plan.data?.status === "READY" ? plan.data.tracks : [];
+
+  /** Load the reviewed list into the player so it can be listened to. */
+  const playPreview = (tracks: PlanTrack[], from = 0) => {
+    setQueue(
+      tracks.map((track) => ({
+        videoId: track.videoId,
+        title: track.title,
+        artists: track.artists,
+        durationSeconds: null,
+        reasonCodes: track.reasonCodes,
+        familiarity: track.familiarity,
+      })),
+    );
+    void playIndex(from);
+  };
 
   return (
     <li className={styles.card}>
@@ -125,6 +145,52 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
 
       {!isActive && <p className={styles.warn}>{NON_ACTIVE_HINT[playlist.status]}</p>}
       {plan.data && <PlanSummary plan={plan.data} />}
+      {previewTracks.length > 0 && (
+        <div className={styles.preview}>
+          <div className={styles.previewHead}>
+            <span className={styles.meta}>
+              {previewTracks.length} tracks
+              {plan.data?.generatedAt
+                ? ` · reviewed ${new Date(plan.data.generatedAt).toLocaleTimeString()}`
+                : ""}
+            </span>
+            <div className={styles.previewActions}>
+              <Button onClick={() => playPreview(previewTracks)}>Play</Button>
+              <Button
+                onClick={() => plan.mutate({ kind, regenerate: true })}
+                disabled={plan.isPending}
+              >
+                {plan.isPending ? "Rebuilding…" : "Regenerate"}
+              </Button>
+            </div>
+          </div>
+          <ol className={styles.trackList}>
+            {previewTracks.map((track, index) => (
+              <li key={track.videoId}>
+                <button
+                  type="button"
+                  className={styles.trackRow}
+                  onClick={() => playPreview(previewTracks, index)}
+                  title="Play from here"
+                >
+                  <span className={styles.trackIndex}>{index + 1}</span>
+                  <span className={styles.trackTitle}>{track.title}</span>
+                  <span className={styles.trackArtist}>{track.artists.join(", ")}</span>
+                  <span
+                    className={
+                      track.familiarity === "FAMILIAR"
+                        ? styles.tagFamiliar
+                        : styles.tagDiscovery
+                    }
+                  >
+                    {track.familiarity === "FAMILIAR" ? "known" : "new"}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {publish.data && (
         <p className={styles.meta}>
@@ -144,40 +210,41 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
       {publish.isError && <p className={styles.warn}>{publishError(publish.error)}</p>}
 
       <div className={styles.actions}>
-        <Button onClick={() => plan.mutate(kind)} disabled={plan.isPending}>
-          {plan.isPending ? "Checking…" : "Preview"}
+        <Button onClick={() => plan.mutate({ kind })} disabled={plan.isPending}>
+          {plan.isPending ? "Checking…" : plan.data ? "Refresh preview" : "Preview"}
         </Button>
-        {isActive ? (
+        {isActive && (
           <Button
             variant="primary"
             onClick={() => publish.mutate(kind)}
-            disabled={publish.isPending}
+            disabled={publish.isPending || !plan.data}
+            title={plan.data ? undefined : "Preview the list before publishing"}
           >
             {publish.isPending ? "Publishing…" : "Publish now"}
           </Button>
+        )}
+        {!isActive && (
+          <Button onClick={() => reconcile.mutate(kind)} disabled={reconcile.isPending}>
+            Verify / adopt
+          </Button>
+        )}
+        {confirmingDelete ? (
+          <Button
+            variant="danger"
+            onClick={() => {
+              remove.mutate(kind);
+              setConfirmingDelete(false);
+            }}
+          >
+            {`Delete ${playlist.playlistId ?? "(none)"} from YouTube — confirm`}
+          </Button>
         ) : (
-          <>
-            <Button onClick={() => reconcile.mutate(kind)} disabled={reconcile.isPending}>
-              Verify / adopt
-            </Button>
-            {confirmingDelete ? (
-              <Button
-                variant="danger"
-                onClick={() => {
-                  remove.mutate(kind);
-                  setConfirmingDelete(false);
-                }}
-              >
-                {`Delete remote playlist ${playlist.playlistId ?? "(none)"} — confirm`}
-              </Button>
-            ) : (
-              <Button variant="danger" onClick={() => setConfirmingDelete(true)}>
-                Delete unverified
-              </Button>
-            )}
-          </>
+          <Button variant="danger" onClick={() => setConfirmingDelete(true)}>
+            {isActive ? "Delete playlist" : "Delete unverified"}
+          </Button>
         )}
       </div>
+      {remove.isError && <p className={styles.warn}>{publishError(remove.error)}</p>}
     </li>
   );
 }
