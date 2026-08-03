@@ -168,9 +168,10 @@ def reconcile(
 ) -> dict[str, Any]:
     _guard_budget(db)
     manifest = _manifest(db, kind)
-    desired = list(build_desired_list(db, kind).video_ids)
+    # Verification compares the remote list against the hash recorded when the
+    # playlist was written, so there is nothing to regenerate here.
     try:
-        outcome = reconcile_setup(db, manifest, catalog, desired)
+        outcome = reconcile_setup(db, manifest, catalog, [])
     except IntegrationError as exc:
         raise map_integration_error(exc) from exc
     return {

@@ -91,3 +91,11 @@ def authed_client(client: TestClient) -> TestClient:
     payload = response.json()
     client.headers.update({payload["headerName"]: payload["csrfToken"]})
     return client
+
+
+@pytest.fixture(autouse=True)
+def _no_verify_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verification retries wait for YouTube to catch up; tests must not."""
+    from app.publishing import service
+
+    monkeypatch.setattr(service, "VERIFY_BACKOFF_SECONDS", (0.0, 0.0, 0.0))

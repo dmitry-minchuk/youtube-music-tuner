@@ -59,6 +59,8 @@
 
 ### Publishing
 
+- verification повторяет чтение, пока только что созданный playlist не станет читаемым, и сохраняет ID при исчерпании попыток;
+- verification сверяется с сохранённым desired hash, поэтому повторный adopt проходит, а изменённый извне playlist по-прежнему отклоняется;
 - не-managed playlist всегда отклоняется;
 - marker mismatch всегда отклоняется;
 - remote hash conflict не пишет ничего;

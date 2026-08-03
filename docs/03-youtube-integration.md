@@ -136,7 +136,13 @@ Tuner поддерживает ровно три стабильных плейл
 
 После явного preview/подтверждения каждый desired list сначала проходит `playlist-gates-v2`, включая выбор `effective_target_size` от 25 до configured default 60. До внешнего вызова Tuner транзакционно создаёт локальный setup intent со статусом CREATING, instance UUID, ownership marker и принятым desired hash. Затем вызывается один `create_playlist(title, description, privacy_status="PRIVATE", video_ids=desired)` со всеми `effective_target_size` треками в целевом порядке. Это initial-create операция, а не incremental diff, поэтому лимит 15 item changes на неё не распространяется.
 
-Сразу после возврата playlist ID он записывается в тот же manifest, а статус меняется на UNVERIFIED **до** verification read. Затем Tuner вызывает `get_playlist(limit=None)` и проверяет marker, effective size, уникальность и полный порядок. При успехе manifest становится ACTIVE. При несовпадении или ошибке чтения он остаётся UNVERIFIED либо получает CLEANUP_REQUIRED; Tuner не пытается автоматически «долить», переставить или создать замену.
+Сразу после возврата playlist ID он записывается в тот же manifest, статус меняется на UNVERIFIED **до** verification read, и запись **коммитится**: одного flush недостаточно, потому что падение процесса откатило бы её, а открытая транзакция вдобавок держит единственный write-lock SQLite на всё время внешних вызовов.
+
+Затем Tuner вызывает `get_playlist(limit=None)` и проверяет marker, effective size, уникальность и полный порядок. Чтение выполняется до трёх раз (сразу, через 2 и через 5 секунд): только что созданный playlist не читается мгновенно — YouTube отвечает неполным payload, который не парсится. Одной попытки не хватало, и все три playlist оставались UNVERIFIED, хотя были созданы корректно.
+
+Порядок сверяется с **хешем согласованного списка**, записанным в manifest, а не с заново сгенерированным списком: очередь каждый раз другая, поэтому повторный `Verify/adopt` иначе всегда возвращал бы `VERIFICATION_MISMATCH`.
+
+При успехе manifest становится ACTIVE. При несовпадении или ошибке чтения он остаётся UNVERIFIED либо получает CLEANUP_REQUIRED; Tuner не пытается автоматически «долить», переставить или создать замену.
 
 После crash/restart setup прежде всего возобновляет CREATING/UNVERIFIED manifests, а не создаёт новый playlist. Если create мог пройти, но ответ не был сохранён, reconciliation ищет среди свежих remote playlists только точный instance marker и expected title, затем проверяет desired hash. Один точный match принимается как UNVERIFIED и проходит verify; ноль остаётся CREATING для безопасного ручного retry, несколько переводят setup в CLEANUP_REQUIRED. UI позволяет отдельно `Verify/adopt` или удалить только exact ID с совпадающим marker после явного подтверждения. Произвольный playlist и manifest без совпавшего marker удалить этим путём нельзя.
 
@@ -174,7 +180,7 @@ Rollback — отдельная ручная операция из backup. Ав�
 
 Потолок discovery-вызовов существует, чтобы зациклившийся job не долбил YouTube, а не чтобы экономить на исследовании: покрыть каждый лайк хотя бы одним запросом стоит один вызов на трек, и при шестидесяти корнях меньший лимит растянул бы представление всего вкуса на двое суток.
 | Remote publish | 1 publish-окно в сутки |
-| Первичное создание managed playlist | один подтверждённый create с максимум `configured_target_size` initial IDs и один verify read; максимум 2 playlist-endpoint requests на playlist |
+| Первичное создание managed playlist | один подтверждённый create с максимум `configured_target_size` initial IDs и до трёх verify reads; максимум 4 playlist-endpoint requests на playlist |
 | Последующие item changes одного managed playlist | максимум 15 логических item changes за окно |
 | Последующие mutating requests одного managed playlist | максимум 15 за окно; batch add/remove = 1 request, move = 1 request |
 | Все playlist-endpoint requests одного managed playlist | максимум 17 за окно: 1 fresh read + до 15 mutations + 1 verify read |

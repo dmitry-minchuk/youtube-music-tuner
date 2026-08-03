@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.integrations.youtube_music.errors import Unavailable
+from app.integrations.youtube_music.errors import ParseError, Unavailable
 from app.persistence.models import ManagedPlaylist, PlaylistBackup
 from app.publishing.service import (
     OwnershipError,
@@ -359,3 +359,82 @@ def test_remote_change_between_windows_fails_without_writing(db_session) -> None
     assert second.status == "FAILED"
     assert second.error_code == "REMOTE_CHANGED"
     assert len(catalog.applied) == writes_before
+
+
+# -- verification is retried while YouTube catches up ---------------------
+
+
+class SlowToAppearCatalog(SetupCatalog):
+    """A just-created playlist is not readable straight away.
+
+    The first reads fail to parse — exactly what YouTube answered when all
+    three playlists ended up UNVERIFIED despite being created correctly.
+    """
+
+    def __init__(self, fail_reads: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.fail_reads = fail_reads
+        self.reads = 0
+
+    def playlist(self, playlist_id: str):
+        self.reads += 1
+        if self.reads <= self.fail_reads:
+            raise ParseError("playlist payload is missing a title")
+        return super().playlist(playlist_id)
+
+
+def test_verification_retries_until_the_playlist_is_readable(db_session) -> None:
+    catalog = SlowToAppearCatalog(fail_reads=2)
+    manifest = make_manifest(db_session, ["a", "b"])
+
+    result = complete_setup(db_session, manifest, catalog, ["a", "b"], sleep=lambda _: None)
+
+    assert catalog.reads == 3
+    assert result.status == "ACTIVE"
+    assert manifest.setup_error_code is None
+
+
+def test_verification_gives_up_after_the_retries_and_keeps_the_id(db_session) -> None:
+    catalog = SlowToAppearCatalog(fail_reads=99)
+    manifest = make_manifest(db_session, ["a", "b"])
+
+    result = complete_setup(db_session, manifest, catalog, ["a", "b"], sleep=lambda _: None)
+
+    assert result.status == "UNVERIFIED"
+    assert result.playlist_id == catalog.created_id
+    assert manifest.setup_error_code == "YTM_PARSE_ERROR"
+
+
+def test_verification_compares_against_the_agreed_hash(db_session) -> None:
+    """Regenerating the desired list gives a different wave every time, so a
+    later adopt could never match. The hash recorded at write time is the
+    reference — this is what left every playlist stuck at UNVERIFIED."""
+    catalog = SetupCatalog()
+    manifest = make_manifest(db_session, ["a", "b", "c"])
+    complete_setup(db_session, manifest, catalog, ["a", "b", "c"], sleep=lambda _: None)
+    assert manifest.status == "ACTIVE"
+
+    manifest.status = "UNVERIFIED"
+    db_session.flush()
+
+    # An empty desired list stands in for "whatever the ranker would produce
+    # now": verification must still succeed off the stored hash.
+    result = reconcile_setup(db_session, manifest, catalog, [])
+    assert result.status == "ACTIVE"
+    assert manifest.setup_error_code is None
+
+
+def test_a_remotely_edited_playlist_still_fails_verification(db_session) -> None:
+    catalog = SetupCatalog()
+    manifest = make_manifest(db_session, ["a", "b", "c"])
+    complete_setup(db_session, manifest, catalog, ["a", "b", "c"], sleep=lambda _: None)
+
+    catalog.snapshots[catalog.created_id] = snapshot(
+        catalog.created_id, ["a", "b"], description=manifest.ownership_marker
+    )
+    manifest.status = "UNVERIFIED"
+    db_session.flush()
+
+    result = reconcile_setup(db_session, manifest, catalog, [])
+    assert result.status == "UNVERIFIED"
+    assert manifest.setup_error_code == "VERIFICATION_MISMATCH"

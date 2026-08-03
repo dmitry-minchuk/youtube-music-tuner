@@ -20,7 +20,10 @@ def _configure_connection(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.execute("PRAGMA busy_timeout=5000")
+    # SQLite allows one writer. A publish or setup run holds its transaction
+    # across several multi-second calls to YouTube, and five seconds was not
+    # enough: incoming telemetry hit "database is locked" and events were lost.
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 

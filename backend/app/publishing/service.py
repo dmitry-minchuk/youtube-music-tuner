@@ -11,6 +11,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -44,6 +45,11 @@ PLAYLIST_TITLES = {
     "BALANCE": "Tuner · Balance",
     "DISCOVERY": "Tuner · Discovery",
 }
+# Verification retries. The first read happens immediately; the two that
+# follow wait, because a just-created playlist needs a moment to become
+# readable. Each retry is one playlist request against the window budget.
+VERIFY_BACKOFF_SECONDS: tuple[float, ...] = (0.0, 2.0, 5.0)
+
 PUBLISH_WINDOW = dt.timedelta(hours=24)
 MAX_BACKUPS = 30
 
@@ -113,6 +119,8 @@ def complete_setup(
     manifest: ManagedPlaylist,
     catalog: MusicCatalogPort,
     desired: list[str],
+    *,
+    sleep=time.sleep,
 ) -> SetupResult:
     """Create the playlist, register the id immediately, then verify."""
     title = PLAYLIST_TITLES[manifest.kind]
@@ -128,12 +136,16 @@ def complete_setup(
             manifest.managed_playlist_id, None, "CREATING", len(desired), error_code=exc.code
         )
 
-    # Register before verifying so a crash cannot orphan the playlist.
+    # Register before verifying so a crash cannot orphan the playlist. The
+    # commit matters: a flush alone keeps the row inside a transaction that a
+    # crash would roll back, and it also keeps SQLite's single write lock held
+    # across the verification calls that follow.
     manifest.playlist_id = playlist_id
     manifest.status = "UNVERIFIED"
     db.flush()
+    db.commit()
 
-    return verify_setup(db, manifest, catalog, desired)
+    return verify_setup(db, manifest, catalog, desired, sleep=sleep)
 
 
 def verify_setup(
@@ -141,27 +153,52 @@ def verify_setup(
     manifest: ManagedPlaylist,
     catalog: MusicCatalogPort,
     desired: list[str],
+    *,
+    sleep=time.sleep,
 ) -> SetupResult:
     if manifest.playlist_id is None:
         return SetupResult(manifest.managed_playlist_id, None, manifest.status, len(desired))
 
-    try:
-        snapshot = catalog.playlist(manifest.playlist_id)
-    except IntegrationError as exc:
-        manifest.setup_error_code = exc.code
+    # A freshly created playlist is not readable straight away: YouTube answers
+    # with a partial payload that fails to parse, or with an order that has not
+    # settled yet. One attempt left all three playlists UNVERIFIED even though
+    # they had been created correctly, so the read is retried briefly.
+    snapshot = None
+    last_error: str | None = None
+    for attempt, delay in enumerate(VERIFY_BACKOFF_SECONDS):
+        if attempt:
+            sleep(delay)
+        try:
+            snapshot = catalog.playlist(manifest.playlist_id)
+        except IntegrationError as exc:
+            last_error = exc.code
+            continue
+        if snapshot.description and manifest.ownership_marker in snapshot.description:
+            break
+
+    if snapshot is None:
+        manifest.setup_error_code = last_error or "YTM_PARSE_ERROR"
         db.flush()
         return SetupResult(
             manifest.managed_playlist_id,
             manifest.playlist_id,
             manifest.status,
             len(desired),
-            error_code=exc.code,
+            error_code=manifest.setup_error_code,
         )
 
     matches_marker = bool(
         snapshot.description and manifest.ownership_marker in snapshot.description
     )
-    matches_order = list(snapshot.video_ids) == desired
+    # Compare against the list we agreed to write, recorded as a hash on the
+    # manifest — not against a freshly generated one. Regenerating gives a
+    # different wave every time, so verification could never succeed after the
+    # fact and every adopt attempt reported VERIFICATION_MISMATCH.
+    remote_hash = desired_hash(list(snapshot.video_ids))
+    if manifest.accepted_desired_hash:
+        matches_order = remote_hash == manifest.accepted_desired_hash
+    else:
+        matches_order = list(snapshot.video_ids) == desired
     unique = len(set(snapshot.video_ids)) == len(snapshot.video_ids)
 
     if matches_marker and matches_order and unique:
