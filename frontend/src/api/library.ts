@@ -33,7 +33,8 @@ export interface TunerPlaylistDto {
 export interface RemotePlaylistDto {
   playlistId: string;
   title: string;
-  trackCount: number;
+  /** null when YouTube does not report a size, as for its system playlists. */
+  trackCount: number | null;
   fetchedAt: string;
 }
 

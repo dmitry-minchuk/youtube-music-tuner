@@ -155,17 +155,18 @@ def parse_library_playlists(raw: Any) -> list[RemotePlaylist]:
             continue
         if not isinstance(title, str) or not title.strip():
             continue
+        # Absent for the system playlists; keep that distinct from "empty".
         count = entry.get("count")
         if isinstance(count, str):
             digits = "".join(ch for ch in count if ch.isdigit())
-            count = int(digits) if digits else 0
+            count = int(digits) if digits else None
         description = entry.get("description")
         playlists.append(
             RemotePlaylist(
                 playlist_id=playlist_id,
                 title=title.strip(),
                 description=description if isinstance(description, str) else None,
-                track_count=count if isinstance(count, int) else 0,
+                track_count=count if isinstance(count, int) else None,
             )
         )
     return playlists

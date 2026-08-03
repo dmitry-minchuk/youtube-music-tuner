@@ -41,6 +41,9 @@ from app.persistence.models import (
 
 router = APIRouter(prefix="/api/v1", tags=["library"])
 
+# YouTube's own id for the likes collection.
+LIKED_MUSIC_PLAYLIST_ID = "LM"
+
 DEFAULT_PAGE = 50
 MAX_PAGE = 200
 SEARCH_CACHE_TTL = dt.timedelta(hours=24)
@@ -145,15 +148,26 @@ def list_playlists(db: Session = Depends(get_session)) -> dict[str, Any]:
         if row.playlist_id is not None
     }
 
+    # Liked Music is the one playlist whose size YouTube never reports but we
+    # know exactly: it is the like state we already synced.
+    liked_count = db.scalar(
+        select(func.count())
+        .select_from(LibraryTrackState)
+        .where(LibraryTrackState.is_liked.is_(True))
+    )
+
     remote = []
     for row in db.scalars(select(RemotePlaylist).where(RemotePlaylist.remote_deleted_at.is_(None))):
         if row.playlist_id in managed:
             continue
+        count = row.track_count
+        if row.playlist_id == LIKED_MUSIC_PLAYLIST_ID:
+            count = liked_count
         remote.append(
             {
                 "playlistId": row.playlist_id,
                 "title": row.title,
-                "trackCount": row.track_count,
+                "trackCount": count,
                 "fetchedAt": row.fetched_at.isoformat() + "Z",
             }
         )

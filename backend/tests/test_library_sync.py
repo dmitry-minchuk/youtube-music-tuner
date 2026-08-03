@@ -126,3 +126,36 @@ def test_cooldown_blocks_a_second_sync_within_the_ttl(db_session) -> None:
 
     # ...and is allowed again once the TTL has passed.
     check_cooldown(db_session, utcnow() + dt.timedelta(hours=7))
+
+
+def test_a_missing_playlist_size_is_unknown_not_zero() -> None:
+    """YouTube omits `count` for Liked Music and Episodes for Later; reporting
+    those as 0 made the UI claim they were empty."""
+    from app.integrations.youtube_music.parsers import parse_library_playlists
+
+    parsed = parse_library_playlists(
+        [
+            {"playlistId": "LM", "title": "Liked Music", "description": None},
+            {"playlistId": "PL1", "title": "Mine", "count": "12"},
+            {"playlistId": "PL2", "title": "Empty", "count": "0"},
+        ]
+    )
+    by_id = {playlist.playlist_id: playlist for playlist in parsed}
+    assert by_id["LM"].track_count is None
+    assert by_id["PL1"].track_count == 12
+    assert by_id["PL2"].track_count == 0
+
+
+def test_liked_music_reports_the_locally_known_size(authed_client, db_session) -> None:
+    from app.persistence.models import LibraryTrackState, RemotePlaylist, Track
+
+    db_session.add(RemotePlaylist(playlist_id="LM", title="Liked Music", track_count=None))
+    for index in range(3):
+        db_session.add(Track(video_id=f"liked-{index}", title=f"t{index}", is_playable=True))
+        db_session.flush()
+        db_session.add(LibraryTrackState(video_id=f"liked-{index}", is_liked=True))
+    db_session.commit()
+
+    body = authed_client.get("/api/v1/playlists").json()
+    liked = next(p for p in body["remotePlaylists"] if p["playlistId"] == "LM")
+    assert liked["trackCount"] == 3

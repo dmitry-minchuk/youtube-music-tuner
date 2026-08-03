@@ -93,7 +93,10 @@ class RemotePlaylist(Base):
     playlist_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    track_count: Mapped[int] = mapped_column(Integer, default=0)
+    # NULL means YouTube did not report a size — it omits the field for the
+    # system playlists (Liked Music, Episodes for Later). Storing 0 there made
+    # the UI claim they were empty.
+    track_count: Mapped[int | None] = mapped_column(Integer, default=None)
     content_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
     remote_deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)

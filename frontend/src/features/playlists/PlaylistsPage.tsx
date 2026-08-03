@@ -51,6 +51,12 @@ function publishError(error: unknown): string {
   return "Could not reach the local API.";
 }
 
+/** YouTube omits the size of its own system playlists — that is not zero. */
+function describeTrackCount(count: number | null): string {
+  if (count === null) return "size not reported by YouTube";
+  return count === 1 ? "1 track" : `${count} tracks`;
+}
+
 /** A setup that skipped a playlist still returns 200, so say what happened. */
 function setupOutcome(result: SetupResult): string {
   if (result.status === "SKIPPED_QUALITY") {
@@ -311,7 +317,7 @@ export function PlaylistsPage(): React.JSX.Element {
               {data.remotePlaylists.map((playlist) => (
                 <li key={playlist.playlistId} className={styles.card}>
                   <h3>{playlist.title}</h3>
-                  <p className={styles.meta}>{playlist.trackCount} tracks</p>
+                  <p className={styles.meta}>{describeTrackCount(playlist.trackCount)}</p>
                 </li>
               ))}
             </ul>
