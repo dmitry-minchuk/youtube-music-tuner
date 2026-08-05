@@ -1,0 +1,50 @@
+schema: spec-driven
+
+context: |
+  YouTube Music Tuner — local, single-user, non-commercial music player and
+  recommender on top of YouTube Music. One Docker Compose service bound to
+  127.0.0.1:43127. No cloud component, no second user, no LLM at runtime.
+
+  Backend: Python 3.13, FastAPI, SQLAlchemy 2, Alembic, SQLite in WAL mode,
+  Pydantic v2, NumPy. Checks: pytest, ruff, mypy.
+  Frontend: React 19, TypeScript, Vite, TanStack Query, Zustand, CSS Modules.
+  Checks: vitest, tsc.
+  External access goes through ytmusicapi behind one adapter; auth is browser
+  cookie headers, because OAuth with a self-made client is rejected (ADR-001).
+
+  The design documents in docs/ are the source of truth and are written in
+  Russian; numbered 01..13 plus decisions/ADR-00x. Code, comments, commit
+  messages and identifiers are English. Any behaviour change updates the
+  matching requirement and acceptance criterion first (docs/README.md).
+
+  Non-negotiables:
+  - secrets live only in /data/secrets with mode 0600, never logged, never
+    echoed to the UI, never committed;
+  - Tuner writes only to its own three marker-verified private playlists and
+    never touches anything it did not create;
+  - external calls run under a local ledger, per-day budgets and a circuit
+    breaker; a failure must back off, never tight-loop;
+  - `docker compose down -v` destroys the data volume and is not a routine
+    command.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
