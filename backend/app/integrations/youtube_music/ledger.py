@@ -39,7 +39,9 @@ MAX_MUTATING_REQUESTS_PER_WINDOW = 15
 MAX_PLAYLIST_REQUESTS_PER_WINDOW = 17  # 1 fresh read + 15 mutations + 1 verify
 MANAGED_PLAYLIST_COUNT = 3
 GLOBAL_PLAYLIST_REQUESTS_PER_DAY = MAX_PLAYLIST_REQUESTS_PER_WINDOW * MANAGED_PLAYLIST_COUNT  # 51
-INITIAL_SETUP_REQUESTS_PER_PLAYLIST = 2  # create + verify
+# One create plus up to three verification reads: a just-created playlist is
+# not readable immediately (docs/03 section 8).
+INITIAL_SETUP_REQUESTS_PER_PLAYLIST = 4
 
 # Backoff ladder before the circuit opens.
 BACKOFF_SECONDS = (60, 300, 1800)

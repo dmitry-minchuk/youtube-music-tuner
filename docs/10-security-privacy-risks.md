@@ -49,7 +49,8 @@
 
 - обычный publish только для ACTIVE ID из `managed_playlists`;
 - create intent сохраняется до внешнего вызова, возвращённый ID — как UNVERIFIED до verification; restart reconciles marker вместо создания дубликата;
-- совпадение remote ownership marker и local instance UUID; UNVERIFIED можно только verify/adopt или явно удалить по exact ID+marker;
+- совпадение remote ownership marker и local instance UUID; UNVERIFIED можно только verify/adopt или удалить по явному подтверждению;
+- удаление разрешено для UNVERIFIED, CLEANUP_REQUIRED и ACTIVE — то есть для плейлистов самого слушателя, — но каждый раз по exact ID + свежая проверка marker. Гарантия не в статусе, а в маркере: плейлист, созданный не Tuner, недостижим ни в одном статусе. Прежний запрет на удаление ACTIVE ничего не защищал и лишь лишал возможности убрать не понравившийся плейлист;
 - private visibility при создании;
 - playlist quality gates до любого create/publish;
 - fresh read и optimistic `content_hash` перед записью;
@@ -110,7 +111,11 @@
 | API spam/throttling | низкая | высокий | ledger, TTL, daily budgets, circuit | низкий |
 | Утечка токена через Git/log | низкая | высокий | ignore, file secret, redaction tests | низкий |
 | Неверная интерпретация skip | средняя | средний | explicit next only, neutral unknown, raw events | низкий-средний |
-| Модель зациклилась на артистах | средняя | средний | diversity gates, monitoring, rollback model | низкий |
+| Модель зациклилась на артистах | средняя | средний | diversity gates, memory на уровне артистов, monitoring, rollback model | низкий |
+| Пул отражает лишь часть вкуса, волны звучат одинаково | **реализовался** | средний | ширина прежде глубины при обходе графа: нераскрытые избранные раскрываются раньше достижимых кандидатов; метрика покрытия корней | низкий |
+| Планировщик уходит в tight loop и раздувает БД | **реализовался** | высокий | backoff на любую завершённую попытку, circuit только для внешних работ, лимит подряд идущих запусков, retention успешных jobs | низкий |
+| Долгий внешний вызов держит write-lock SQLite и теряет телеметрию | **реализовался** | средний | commit сразу после получения ID, busy_timeout 30 с | низкий |
+| Публикация вслепую: пользователь не видит состав плейлиста | **реализовался** | средний | Preview отдаёт треки и играет их, Publish пишет просмотренный список, кнопка заблокирована до просмотра | низкий |
 | IFrame трек недоступен/реклама | средняя | низкий-средний | neutral error, skip candidate; не обходить ограничения | средний |
 | Воспроизведение при скрытой вкладке расходится со строгим чтением policy | средняя | низкий | настройка с явным описанием, выключена по решению владельца; player остаётся видимым и немаскированным | принят владельцем |
 | Public/LAN exposure по ошибке | низкая | высокий | hardcoded loopback Compose mapping, startup warning | низкий |

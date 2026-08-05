@@ -73,8 +73,11 @@ docker compose logs --tail=200 tuner
 # Безопасно импортировать Google client JSON; CLI пишет файл как UID 10001 с mode 0600
 docker compose exec -T tuner python -m app.cli credentials import - < client_secret.json
 
-# OAuth device flow
+# OAuth device flow (не работает с self-made client — см. ADR-001; используйте browser headers)
 docker compose exec tuner python -m app.cli auth
+
+# Подключение через cookie-заголовки браузера: скрипт кладёт файл в /data/secrets
+./connect.sh
 
 # Ручной backup
 docker compose exec tuner python -m app.cli backup
@@ -125,6 +128,13 @@ Bind mount допускается только как явный advanced overri
 - Compose `restart: unless-stopped` подходит для личного always-on режима.
 - App startup не запускает полный sync немедленно, если последний успешный sync ещё в TTL.
 
+### На что смотреть, если что-то идёт не так
+
+- **Размер `jobs`.** Норма — сотни строк. Тысячи означают, что периодическая работа переставляется без паузы (docs/02 section 8): один раз это выросло до 2,5 млн строк и 944 МБ файла БД. Диагностика — число созданных задач за минуту.
+- **`database is locked` в логах.** Внешний вызов держит единственную write-блокировку SQLite; при этом теряется телеметрия. `busy_timeout` = 30 с, а долгие операции коммитят промежуточное состояние.
+- **Расход discovery-бюджета.** `GET /api/v1/diagnostics/api-budget` показывает израсходованные вызовы; исчерпание — это норма в дни активного расширения графа, а не сбой.
+- **Покрытие избранного.** `GET /api/v1/insights/pool` показывает размер пула и распределение по расстоянию. Пул, который не растёт, означает, что расширение графа не выполняется.
+
 ## 8. Backup
 
 Перед backup:
@@ -136,6 +146,8 @@ Bind mount допускается только как явный advanced overri
 5. проверить открытие backup database командой integrity check.
 
 Автоматические daily backups хранятся 14 дней. Playlist snapshots внутри БД не заменяют backup всей БД.
+
+Retention также ограничивает служебные таблицы: успешные jobs живут 7 дней, неудачные — 30, рёбра графа кандидатов удаляются только если не обновлялись год (docs/07 section 8). Граф — накопленное знание, а не кеш, поэтому основной рост файла БД приходится на него: порядка тысячи рёбер в сутки при активном расширении.
 
 Копия считается внешней только после `docker compose cp` в host directory и повторной проверки manifest/checksum на host. Backup, лежащий в том же named volume, не защищает от удаления volume.
 

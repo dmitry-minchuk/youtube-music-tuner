@@ -68,6 +68,7 @@ Response:
     "qualityScoreSource": "RULE_MAPPED"
   },
   "mix": {"targetFamiliarPercent": 55, "actualFamiliarPercent": 50, "actualDiscoveryPercent": 50},
+  "freshness": {"poolSize": 741, "overlapPreviousPercent": 0},
   "relaxations": ["FAMILIAR_POOL_WIDENED"],
   "items": [
     {
@@ -79,6 +80,10 @@ Response:
   ]
 }
 ```
+
+`freshness` отражает целевой показатель из docs/01 BR-012: сколько играбельных кандидатов было доступно и какую долю этой волны содержала предыдущая. Оба значения сохраняются на генерации, поэтому динамику видно в Insights.
+
+Воспроизводимость по `randomSeed` означает «то же состояние базы плюс тот же seed». Последние генерации сами являются входом следующей, поэтому два вызова подряд намеренно дают разные очереди — это требование, а не недетерминированность.
 
 После bootstrap и до activation SHADOW-ответ явно показывает обучаемую, но не serving-модель:
 
@@ -176,15 +181,19 @@ Explanation возвращает reason codes и числовые вкладчи
 | Method | Path | Назначение |
 | --- | --- | --- |
 | POST | `/api/v1/managed-playlists/setup` | создать либо reconcile три Tuner playlist после preview |
-| POST | `/api/v1/managed-playlists/{kind}/plan` | локальный diff без внешней записи |
+| POST | `/api/v1/managed-playlists/{kind}/plan` | просмотр состава без внешних вызовов; `{"regenerate": true}` предлагает другой вариант |
 | POST | `/api/v1/managed-playlists/{kind}/publish` | поставить idempotent job |
 | POST | `/api/v1/managed-playlists/{kind}/reconcile` | проверить/adopt CREATING, UNVERIFIED или CLEANUP_REQUIRED exact marker |
-| DELETE | `/api/v1/managed-playlists/{kind}/setup-artifact` | после подтверждения удалить только exact remote ID с совпавшим marker |
+| DELETE | `/api/v1/managed-playlists/{kind}/setup-artifact` | после подтверждения удалить свой playlist в любом статусе, только exact remote ID с совпавшим marker |
 | GET | `/api/v1/publications/{id}` | state и verification |
 | GET | `/api/v1/managed-playlists/{kind}/backups` | доступные snapshots |
 | POST | `/api/v1/managed-playlists/{kind}/restore` | спланировать ручное восстановление |
 
 Publish request содержит `expectedRemoteHash` из preview. Если remote playlist изменён после preview, backend отвечает `409 REMOTE_CHANGED` и ничего не записывает.
+
+`POST .../plan` возвращает **сам список**, а не только счётчики: массив `tracks` с `videoId`, `title`, `artists`, `familiarity` и `reasonCodes`, плюс `randomSeed` и `generatedAt`. Показанный список сохраняется на манифесте, поэтому повторный вызов возвращает его же, а `publish` записывает именно его — иначе публиковалось бы то, чего пользователь не видел. Тело `{"regenerate": true}` заменяет предложение новым кандидатом с другим seed.
+
+Verification только что созданного playlist выполняет до трёх чтений с задержками: YouTube отвечает неполным payload, пока playlist не станет читаемым. Порядок сверяется с сохранённым desired hash, а не с заново сгенерированным списком, иначе повторный `reconcile` всегда возвращал бы `VERIFICATION_MISMATCH`.
 
 Initial setup request также содержит accepted desired hash и results `playlist-gates-v2`; backend до create сохраняет CREATING intent, создаёт private playlist сразу с `effectiveTargetSize` video IDs, немедленно регистрирует возвращённый ID как UNVERIFIED и затем верифицирует полный порядок. Setup response всегда возвращает `managedPlaylistId`, `status`, nullable `playlistId`, `configuredTargetSize`, `effectiveTargetSize`, gate reasons и exact pool counts. При уменьшении размера присутствует `TARGET_SIZE_REDUCED_FOR_POOL`; при невозможности набрать минимум 25 backend отвечает без внешней записи:
 

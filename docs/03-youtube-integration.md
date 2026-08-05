@@ -77,15 +77,15 @@ Adapter обязан:
 | Состав плейлиста | `get_playlist()` | TTL 6 часов; перед publish обязательно свежий read |
 | Доступная история | `get_history()` | не чаще раза в 6 часов; только вспомогательный сигнал |
 | Поиск | `search()` | только по явному действию, debounce 400 мс, TTL 24 часа |
-| Похожие треки | `get_song_related()` | TTL 7 дней на seed |
-| Радио/очередь | `get_watch_playlist(..., radio=True)` | TTL 7 дней на seed |
+| Похожие треки | `get_song_related()` | seed не переспрашивается 7 дней; полученные рёбра остаются в графе |
+| Радио/очередь | `get_watch_playlist(..., radio=True)` | seed не переспрашивается 7 дней; полученные рёбра остаются в графе |
 | Mood sources | `get_mood_categories()`, `get_mood_playlists()` | TTL 30 дней/7 дней |
 | Like/dislike | `rate_song()` | только изменение состояния, debounce/idempotency |
 | Создание | `create_playlist(..., video_ids=desired)` | только подтверждённый initial managed setup |
 | Изменение | `add_playlist_items()`, `remove_playlist_items()`, `edit_playlist()` | publish job |
-| Удаление | `delete_playlist(playlistId)` | только явно подтверждённый cleanup собственного UNVERIFIED/CLEANUP_REQUIRED setup artifact после fresh marker check |
+| Удаление | `delete_playlist(playlistId)` | только явно подтверждённое удаление собственного managed playlist после fresh marker check |
 
-Загрузка музыки, удаление чужих плейлистов и обычных пользовательских сущностей находятся вне scope. Единственное исключение — удаление собственного неверифицированного setup-артефакта Tuner в статусе UNVERIFIED/CLEANUP_REQUIRED с exact ID, fresh ownership marker и отдельным подтверждением.
+Загрузка музыки, удаление чужих плейлистов и обычных пользовательских сущностей находятся вне scope. Единственное исключение — удаление собственного managed playlist (UNVERIFIED, CLEANUP_REQUIRED либо ACTIVE) с exact ID, fresh ownership marker и отдельным подтверждением: это плейлисты слушателя, и защищает их не статус, а маркер.
 
 ## 5. Синхронизация библиотеки
 
@@ -114,11 +114,11 @@ Worker перед вызовом читает самую новую revision. П
 
 Candidate refresh выполняется отдельно от ранжирования:
 
-- выбрать максимум 5 seed за один run: сильные давние лайки, свежие успешные открытия и текущий контекст;
-- для каждого seed сделать максимум один `related` и один `radio` вызов, только если TTL истёк;
-- сохранить edge `seed → candidate`, источник, позицию и время получения;
-- дедуплицировать по `videoId`;
-- не обновлять candidate pool чаще одного раза в сутки автоматически;
+- выбрать максимум 6 seed за один run из positive roots — лайков **и** треков с сильной локальной наградой; ещё не раскрытые избранные идут первыми, потому что нераскрытый лайк не даёт пулу ничего;
+- для каждого seed сделать максимум один `related` и один `radio` вызов, только если seed давно не опрашивался;
+- сохранить edge `seed → candidate`, источник, позицию, расстояние от корня (`hop`) и время получения;
+- дедуплицировать по `videoId`, но **не схлопывать кратность**: сколько разных избранных треков указывают на кандидата — самый сильный доступный сигнал;
+- не обновлять candidate pool чаще одного раза в сутки автоматически; расширение границы графа идёт отдельной работой каждые 6 часов;
 - при открытии Wave работать только с локальным pool;
 - при пустом pool разрешить одну foreground refresh-операцию с явным статусом UI.
 
@@ -189,7 +189,7 @@ Rollback — отдельная ручная операция из backup. Ав�
 | Повтор после transient error | 60 секунд → 5 минут → 30 минут → circuit open |
 | Search | только пользовательский ввод, debounce + cache |
 
-Initial setup является отдельной явной операцией: максимум 6 endpoint requests для трёх playlists, все заносятся в ledger; automatic publish в те же сутки не запускается. Каждый внешний вызов записывается в `api_call_ledger` с playlist/publication ID и признаком read/mutation. При превышении item, per-playlist request или global request budget automatic jobs откладываются; ручное force-действие требует отдельного подтверждения в UI и не обходит request caps или circuit breaker при auth/rate-limit ошибке.
+Initial setup является отдельной явной операцией: максимум 12 endpoint requests для трёх playlists (create плюс до трёх verification reads на каждый), все заносятся в ledger; automatic publish в те же сутки не запускается. Каждый внешний вызов записывается в `api_call_ledger` с playlist/publication ID и признаком read/mutation. При превышении item, per-playlist request или global request budget automatic jobs откладываются; ручное force-действие требует отдельного подтверждения в UI и не обходит request caps или circuit breaker при auth/rate-limit ошибке.
 
 ## 10. Стратегия обновления зависимости
 
