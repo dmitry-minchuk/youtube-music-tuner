@@ -78,6 +78,9 @@ export function relaxationMessage(codes: string[]): string | null {
   if (codes.includes("FAMILIAR_POOL_WIDENED")) {
     return "Not enough familiar tracks yet — filled the gap with discovery picks.";
   }
+  if (codes.includes("FAMILIAR_ROTATION_CAP")) {
+    return "Keeping part of your favourites in reserve so the next wave can differ.";
+  }
   if (codes.includes("CONTEXT_WIDENED")) {
     return "Context widened — this context cannot narrow the selection yet.";
   }

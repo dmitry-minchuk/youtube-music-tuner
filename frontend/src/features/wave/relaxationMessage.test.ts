@@ -22,6 +22,10 @@ describe("relaxationMessage", () => {
     expect(relaxationMessage(["CONTEXT_WIDENED"])).toMatch(/Context widened/);
   });
 
+  it("explains the rotation reserve instead of calling it diversity", () => {
+    expect(relaxationMessage(["FAMILIAR_ROTATION_CAP", "CONTEXT_WIDENED"])).toMatch(/reserve/);
+  });
+
   it("falls back to the diversity message for ladder codes", () => {
     expect(relaxationMessage(["ARTIST_WINDOW_15_RELAXED"])).toMatch(/Diversity widened/);
   });
