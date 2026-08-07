@@ -212,6 +212,7 @@ def rerank(
     chosen: list[RerankCandidate] = []
     familiar_count = 0
     ladder_index = 0
+    ceiling_hit = False
     tau = selection_temperature(temperature)
 
     while len(chosen) < length and remaining:
@@ -236,6 +237,18 @@ def rerank(
             owed = [item for item in allowed if item.familiar]
             if owed:
                 allowed = owed
+        elif familiar_count >= familiar_target:
+            # The quota is a ceiling as much as a floor. Familiar tracks
+            # systematically outscore discovery, so once the quota is met they
+            # would silently take every remaining slot; a wave asked to explore
+            # must actually explore. Falling back to familiar (never a shorter
+            # queue) only when no admissible discovery remains keeps the ladder
+            # semantics intact — and the fallback is declared, not silent.
+            discovery = [item for item in allowed if not item.familiar]
+            if discovery:
+                allowed = discovery
+            else:
+                ceiling_hit = True
 
         scored = [(_adjusted_score(item, chosen, quota_pressure), item) for item in allowed]
         best = _pick(scored, rng, tau)
@@ -243,6 +256,9 @@ def rerank(
         chosen.append(best)
         if best.familiar:
             familiar_count += 1
+
+    if ceiling_hit and "DISCOVERY_POOL_WIDENED" not in result.relaxations:
+        result.relaxations.append("DISCOVERY_POOL_WIDENED")
 
     result.items = _annotate_positions(chosen)
     result.actual_familiar_count = familiar_count

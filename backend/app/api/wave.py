@@ -115,7 +115,15 @@ def get_wave(queue_id: str, db: Session = Depends(get_session)) -> dict[str, Any
         "queueId": queue_id,
         "generationId": generation.generation_id,
         "ranking": {
-            "phase": "BASELINE" if generation.serving_model_id is None else "ACTIVE",
+            # Restored from the stored generation: a shadow model was watching
+            # but not serving, and the label must not upgrade it to BASELINE.
+            "phase": (
+                "ACTIVE"
+                if generation.serving_model_id is not None
+                else "SHADOW"
+                if generation.shadow_model_id is not None
+                else "BASELINE"
+            ),
             "servingPolicy": generation.serving_policy,
             "servingModelId": generation.serving_model_id,
             "shadowModelId": generation.shadow_model_id,

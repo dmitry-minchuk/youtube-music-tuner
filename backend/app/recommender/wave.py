@@ -82,6 +82,7 @@ def rotation_share(temperature: int) -> float:
     position = max(0, min(100, temperature)) / 100
     return ROTATION_SHARE_COLD + position * (ROTATION_SHARE_HOT - ROTATION_SHARE_COLD)
 
+
 # How many past generations are remembered when avoiding repeats, and how
 # hard each one is penalised. Index 0 is the wave just before this one.
 WAVE_HISTORY_DEPTH = 4
@@ -100,6 +101,16 @@ PLAYBACK_ERROR_COOLDOWN = dt.timedelta(hours=24)
 REDISCOVERY_DAYS = 60
 FATIGUE_WINDOW_DAYS = 7
 STRONG_POSITIVE_REWARD = 0.4
+
+# When the Rediscover pool is too small to fill the wave outright, matching
+# tracks are boosted instead of filtered (docs/05 section 10). Sized like the
+# artist history penalty so it can actually move a candidate up the ranking.
+REDISCOVER_BOOST = 0.35
+
+# Moods that would need YouTube Music mood-playlist membership, which the
+# graph does not ingest yet: they cannot narrow the pool, and the response
+# must say so instead of pretending to filter (docs/05 section 10).
+UNSUPPORTED_MOODS = frozenset({"FOCUS", "ENERGY", "CALM", "BACKGROUND"})
 
 # How much agreement between several liked seeds may lift a candidate above
 # its plain source rank.
@@ -197,9 +208,7 @@ def _error_cooldown(db: Session, now: dt.datetime) -> set[str]:
     return set(rows)
 
 
-def skip_quarantine(
-    db: Session, now: dt.datetime, protected: set[str] | None = None
-) -> set[str]:
+def skip_quarantine(db: Session, now: dt.datetime, protected: set[str] | None = None) -> set[str]:
     """Tracks you have skipped often enough to deserve a rest.
 
     Two skips buy a week off, three or more a month. A track you have also
@@ -272,9 +281,7 @@ def recent_generations(db: Session, depth: int = WAVE_HISTORY_DEPTH) -> list[set
     generation_ids = list(
         db.scalars(
             select(QueueGeneration.generation_id)
-            .order_by(
-                QueueGeneration.created_at.desc(), QueueGeneration.generation_id.desc()
-            )
+            .order_by(QueueGeneration.created_at.desc(), QueueGeneration.generation_id.desc())
             .limit(depth)
         ).all()
     )
@@ -525,7 +532,28 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
 
     artist_history = {} if request.for_publishing else recent_generation_artists(db, history)
 
-    tracks = {video_id: playable[video_id] for video_id in freshness.ids}
+    # Mood narrows the pool where local data allows it; a context that cannot
+    # change the selection declares CONTEXT_WIDENED rather than staying quiet.
+    eligible_ids = set(freshness.ids)
+    rediscover_boost_ids: set[str] = set()
+    mood_relaxations: list[str] = []
+    if request.mood == "REDISCOVER":
+        cutoff = now - dt.timedelta(days=REDISCOVERY_DAYS)
+        rested = set(
+            db.scalars(
+                select(TrackAffinity.video_id).where(TrackAffinity.last_played_at <= cutoff)
+            ).all()
+        )
+        rediscoverable = eligible_ids & rested
+        if len(rediscoverable) >= request.length:
+            eligible_ids = rediscoverable
+        else:
+            rediscover_boost_ids = rediscoverable
+            mood_relaxations.append("CONTEXT_WIDENED")
+    elif request.mood in UNSUPPORTED_MOODS:
+        mood_relaxations.append("CONTEXT_WIDENED")
+
+    tracks = {video_id: playable[video_id] for video_id in eligible_ids}
     affinities = {
         row.video_id: row
         for row in db.scalars(select(TrackAffinity).where(TrackAffinity.video_id.in_(tracks)))
@@ -622,6 +650,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             if artist_position is not None and artist_position < len(ARTIST_HISTORY_PENALTY):
                 score -= ARTIST_HISTORY_PENALTY[artist_position]
 
+        # Rediscover fell back to a soft boost: applied after the model score
+        # so it works in every serving phase, like the history penalties.
+        if video_id in rediscover_boost_ids:
+            score += REDISCOVER_BOOST
+
         reasons = _reason_codes(
             familiar=familiar,
             liked=video_id in liked,
@@ -664,11 +697,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         temperature=request.temperature,
     )
 
-    relaxations = [*freshness.relaxations, *reranked.relaxations]
+    relaxations = [*freshness.relaxations, *mood_relaxations, *reranked.relaxations]
     if effective_target < familiar_target:
-        relaxations.append(
-            "FAMILIAR_ROTATION_CAP" if rotation_cap < familiar_target else "FAMILIAR_POOL_WIDENED"
-        )
+        # effective_target only drops below the quota when the rotation cap
+        # bites (it is min(quota, cap)), so this is always the rotation code.
+        relaxations.append("FAMILIAR_ROTATION_CAP")
     if reranked.actual_familiar_count < familiar_target and available_familiar < familiar_target:
         relaxations.append("FAMILIAR_POOL_WIDENED")
 

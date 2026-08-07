@@ -263,6 +263,132 @@ def test_one_artist_cannot_dominate_a_window_of_five(db_session) -> None:
         assert window.count("Monopolist") <= 1
 
 
+def test_familiar_cannot_exceed_the_quota_while_discovery_remains() -> None:
+    """The quota is a ceiling, not only a floor (docs/05 s.9, s.11).
+
+    Familiar candidates outscore discovery by more than any soft nudge —
+    exactly the live-data condition under which waves silently came back
+    50%+ familiar at a 15% target. With admissible discovery remaining, the
+    familiar count must equal the target exactly.
+    """
+    from app.recommender.reranker import RerankCandidate, rerank
+
+    candidates = [
+        RerankCandidate(
+            video_id=f"fam-{index}",
+            score=2.0,
+            artist_id=f"fam-artist-{index}",
+            album_id=None,
+            seed_video_id=None,
+            source_type="LIKED",
+            familiar=True,
+            quality_expected=0.9,
+            proven_playable=True,
+        )
+        for index in range(10)
+    ] + [
+        RerankCandidate(
+            video_id=f"disc-{index}",
+            score=0.5,
+            artist_id=f"disc-artist-{index}",
+            album_id=None,
+            seed_video_id=None,
+            source_type="RADIO",
+            familiar=False,
+            quality_expected=0.5,
+            proven_playable=True,
+        )
+        for index in range(30)
+    ]
+
+    result = rerank(candidates, 20, 3)
+    assert result.actual_familiar_count == 3
+    assert len(result.items) == 20
+    assert "DISCOVERY_POOL_WIDENED" not in result.relaxations
+
+
+def test_exhausted_discovery_overfills_with_familiar_and_says_so() -> None:
+    """Overshooting the quota is allowed only when discovery runs out, and
+    never silently (docs/05 s.9)."""
+    from app.recommender.reranker import RerankCandidate, rerank
+
+    candidates = [
+        RerankCandidate(
+            video_id=f"fam-{index}",
+            score=1.0,
+            artist_id=f"fam-artist-{index}",
+            album_id=None,
+            seed_video_id=None,
+            source_type="LIKED",
+            familiar=True,
+            quality_expected=0.9,
+            proven_playable=True,
+        )
+        for index in range(10)
+    ] + [
+        RerankCandidate(
+            video_id=f"disc-{index}",
+            score=0.5,
+            artist_id=f"disc-artist-{index}",
+            album_id=None,
+            seed_video_id=None,
+            source_type="RADIO",
+            familiar=False,
+            quality_expected=0.5,
+            proven_playable=True,
+        )
+        for index in range(2)
+    ]
+
+    result = rerank(candidates, 10, 2)
+    assert len(result.items) == 10
+    assert result.actual_familiar_count == 8  # 2 discovery is all there was
+    assert "DISCOVERY_POOL_WIDENED" in result.relaxations
+
+
+def test_hot_wave_holds_the_target_mix_against_strong_familiar_scores(db_session) -> None:
+    """Regression for the live defect: target 15% familiar, actual 40-58%.
+
+    Liked tracks with strong artist affinity outscore deep-rank discovery by
+    well over the quota nudge; before the ceiling this pool produced ~50%
+    familiar at temperature 90+.
+    """
+    from app.persistence.models import ArtistAffinity
+
+    for index in range(20):
+        seed_track(db_session, f"liked-{index}", artist=f"Fav{index}", liked=True)
+        db_session.add(
+            ArtistAffinity(
+                artist_id=f"UCFav{index}",
+                decayed_reward=1.0,
+                plays_7d=0,
+            )
+        )
+    for index in range(80):
+        seed_track(db_session, f"disc-{index}", artist=f"New{index}")
+        seed_edge(db_session, f"liked-{index % 10}", f"disc-{index}", rank=25)
+    db_session.flush()
+
+    for seed in range(5):
+        result = generate_wave(db_session, WaveRequest(temperature=95, length=40, random_seed=seed))
+        assert result.target_familiar_percent == 15
+        assert result.actual_familiar_percent == 15, (
+            f"seed {seed}: actual {result.actual_familiar_percent}% "
+            f"with relaxations {result.relaxations}"
+        )
+        _rollback_generation(db_session, result)
+
+
+def _rollback_generation(db_session, result) -> None:
+    """Remove a persisted generation so history does not accumulate."""
+    from app.persistence.models import FeatureSnapshot, QueueGeneration, QueueItem
+
+    db_session.query(QueueItem).filter_by(generation_id=result.generation_id).delete()
+    db_session.query(FeatureSnapshot).filter_by(generation_id=result.generation_id).delete()
+    db_session.query(QueueGeneration).filter_by(generation_id=result.generation_id).delete()
+    db_session.flush()
+
+
 def test_temperature_shifts_the_familiar_share(db_session) -> None:
     build_pool(db_session, liked_count=20, discovery_count=40)
 
@@ -315,6 +441,75 @@ def test_items_carry_deterministic_reason_codes(db_session) -> None:
 def test_empty_pool_returns_no_items_instead_of_failing(db_session) -> None:
     result = generate_wave(db_session, WaveRequest(length=20))
     assert result.items == ()
+
+
+# -- mood (docs/05 section 10) ---------------------------------------------
+
+
+def test_rediscover_filters_to_long_unheard_tracks(db_session) -> None:
+    """With enough rested tracks the context is a hard filter."""
+    from app.persistence.models import TrackAffinity as Affinity
+
+    build_pool(db_session, liked_count=4, discovery_count=30)
+    for index in range(30):
+        seed_track(db_session, f"rested-{index}", artist=f"Old{index}")
+        seed_edge(db_session, "liked-1", f"rested-{index}", rank=index + 1)
+        db_session.add(
+            Affinity(
+                video_id=f"rested-{index}",
+                plays_all=1,
+                decayed_reward=0.05,
+                last_played_at=utcnow() - dt.timedelta(days=100),
+            )
+        )
+    db_session.flush()
+
+    result = generate_wave(
+        db_session, WaveRequest(temperature=50, mood="REDISCOVER", length=20, random_seed=3)
+    )
+    assert result.items, "rediscover pool was large enough for a full wave"
+    assert all(item.video_id.startswith("rested-") for item in result.items)
+    assert "CONTEXT_WIDENED" not in result.relaxations
+
+
+def test_rediscover_with_thin_pool_widens_and_keeps_the_wave(db_session) -> None:
+    """Too few rested tracks: soft boost, honest code, no starved queue."""
+    from app.persistence.models import TrackAffinity as Affinity
+
+    build_pool(db_session, liked_count=6, discovery_count=30)
+    for index in range(3):
+        db_session.add(
+            Affinity(
+                video_id=f"disc-{index}",
+                plays_all=1,
+                decayed_reward=0.05,
+                last_played_at=utcnow() - dt.timedelta(days=100),
+            )
+        )
+    db_session.flush()
+
+    result = generate_wave(
+        db_session, WaveRequest(temperature=50, mood="REDISCOVER", length=20, random_seed=3)
+    )
+    assert "CONTEXT_WIDENED" in result.relaxations
+    assert len(result.items) > 3, "the fallback must not shrink the wave to the mood pool"
+
+
+def test_unsupported_mood_changes_nothing_but_declares_itself(db_session) -> None:
+    """No mood-playlist data exists: FOCUS must not pretend to filter."""
+    build_pool(db_session, liked_count=6, discovery_count=30)
+
+    focus = generate_wave(
+        db_session, WaveRequest(temperature=50, mood="FOCUS", length=20, random_seed=9)
+    )
+    _rollback_generation(db_session, focus)
+    plain = generate_wave(
+        db_session, WaveRequest(temperature=50, mood="ANY", length=20, random_seed=9)
+    )
+
+    assert "CONTEXT_WIDENED" in focus.relaxations
+    assert "CONTEXT_WIDENED" not in plain.relaxations
+    assert [item.video_id for item in focus.items] == [item.video_id for item in plain.items]
 
 
 def test_queue_opens_with_tracks_that_already_played(db_session) -> None:

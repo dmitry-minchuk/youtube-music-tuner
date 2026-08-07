@@ -49,6 +49,9 @@ export function useCreateWave() {
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["system"] });
+      // The learning label can change the moment a wave is generated under a
+      // new phase (e.g. the first ACTIVE-served wave).
+      void client.invalidateQueries({ queryKey: ["insights", "learning"] });
     },
   });
 }

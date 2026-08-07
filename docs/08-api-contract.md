@@ -83,6 +83,8 @@ Response:
 
 `freshness` отражает целевой показатель из docs/01 BR-012: сколько играбельных кандидатов было доступно и какую долю этой волны содержала предыдущая. Оба значения сохраняются на генерации, поэтому динамику видно в Insights.
 
+`relaxations` перечисляет объявленные отклонения от целевого состава; возможные коды: `FAMILIAR_POOL_WIDENED`, `DISCOVERY_POOL_WIDENED`, `FAMILIAR_ROTATION_CAP`, `CONTEXT_WIDENED`, `DISCOVERY_REPEAT_ALLOWED`, `FAMILIAR_REPEAT_ALLOWED`, `SOURCE_CONCENTRATION_RELAXED`, `ARTIST_WINDOW_15_RELAXED`, `ARTIST_WINDOW_5_RELAXED`, `LOW_SEED_DIVERSITY` (последний — на уровне item reason codes). Отклонение без кода — дефект.
+
 Воспроизводимость по `randomSeed` означает «то же состояние базы плюс тот же seed». Последние генерации сами являются входом следующей, поэтому два вызова подряд намеренно дают разные очереди — это требование, а не недетерминированность.
 
 После bootstrap и до activation SHADOW-ответ явно показывает обучаемую, но не serving-модель:

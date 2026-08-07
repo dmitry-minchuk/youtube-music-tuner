@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
-import { useSystemStatus } from "@/api/hooks";
+import { useLearningStatus } from "@/api/insights";
 import { useSettings } from "@/api/settings";
 import {
   MOODS,
@@ -39,13 +39,28 @@ function waveErrorMessage(error: unknown): string {
   return "Could not reach the local API.";
 }
 
+/** One message per wave, most consequential code first (docs/05 s.9-10). */
+export function relaxationMessage(codes: string[]): string | null {
+  if (codes.includes("DISCOVERY_POOL_WIDENED")) {
+    return "Not enough fresh discovery candidates — topped up with familiar picks.";
+  }
+  if (codes.includes("FAMILIAR_POOL_WIDENED")) {
+    return "Not enough familiar tracks yet — filled the gap with discovery picks.";
+  }
+  if (codes.includes("CONTEXT_WIDENED")) {
+    return "Context widened — this context cannot narrow the selection yet.";
+  }
+  if (codes.length > 0) return "Diversity widened to fill the queue.";
+  return null;
+}
+
 export function WavePage(): React.JSX.Element {
   const settings = useSettings();
   const [temperature, setTemperature] = useState(50);
   const [mood, setMood] = useState<Mood>("ANY");
   const retuneTimer = useRef<number | null>(null);
 
-  const status = useSystemStatus();
+  const learning = useLearningStatus();
   const createWave = useCreateWave();
   const patchWave = usePatchWave();
   const setQueue = usePlayerStore((store) => store.setQueue);
@@ -102,6 +117,12 @@ export function WavePage(): React.JSX.Element {
   };
 
   const startWave = () => {
+    // A retune scheduled for the previous queue must not fire after the new
+    // wave lands and overwrite it (the PATCH would race the POST).
+    if (retuneTimer.current !== null) {
+      window.clearTimeout(retuneTimer.current);
+      retuneTimer.current = null;
+    }
     createWave.mutate(
       { temperature, mood },
       {
@@ -121,7 +142,15 @@ export function WavePage(): React.JSX.Element {
     retuneTimer.current = window.setTimeout(() => {
       patchWave.mutate(
         { queueId, temperature: nextTemperature, mood: nextMood },
-        { onSuccess: (response) => applyWave(response, nextTemperature, nextMood) },
+        {
+          onSuccess: (response, variables) => {
+            // The response carries a fresh queueId, so compare what the PATCH
+            // targeted with what is on stage now: a retune of a replaced queue
+            // must be dropped, not applied over the wave the user just started.
+            if (variables.queueId !== usePlayerStore.getState().waveMeta?.queueId) return;
+            applyWave(response, nextTemperature, nextMood);
+          },
+        },
       );
     }, RETUNE_DEBOUNCE_MS);
   };
@@ -136,11 +165,10 @@ export function WavePage(): React.JSX.Element {
     scheduleRetune(temperature, value);
   };
 
-  const qualified = status.data?.qualifiedSessions ?? 0;
-  const learningLabel =
-    qualified < 40
-      ? `Collecting signal ${qualified}/40 qualified tracks`
-      : `Baseline ${Math.min(qualified, 100)}/100 · model in shadow`;
+  // The server owns this label (docs/06 s.7): it knows the actual phase,
+  // including "Model active" — a hardcoded string here kept saying "shadow"
+  // long after the model had taken over.
+  const learningLabel = learning.data?.label ?? "Learning status unavailable";
 
   // While retuning, show what the slider promises rather than a stale mix.
   const shownMix = patchWave.isPending
@@ -220,11 +248,9 @@ export function WavePage(): React.JSX.Element {
           </p>
         )}
 
-        {waveMeta && waveMeta.relaxations.length > 0 && (
+        {waveMeta && relaxationMessage(waveMeta.relaxations) && (
           <p className={styles.relaxation} role="status">
-            {waveMeta.relaxations.includes("FAMILIAR_POOL_WIDENED")
-              ? "Not enough familiar tracks yet — filled the gap with discovery picks."
-              : "Diversity widened to fill the queue."}
+            {relaxationMessage(waveMeta.relaxations)}
           </p>
         )}
       </Panel>
