@@ -77,9 +77,7 @@ def select_seeds(db: Session, now: dt.datetime, rng: random.Random) -> list[str]
 
     # A favourite the graph has never been walked from contributes nothing to
     # the pool, so it is explored before anything already covered.
-    explored = set(
-        db.scalars(select(CandidateEdge.seed_video_id).distinct()).all()
-    )
+    explored = set(db.scalars(select(CandidateEdge.seed_video_id).distinct()).all())
     unexplored = [video for video in positives if video not in explored]
     if unexplored:
         positives = unexplored
@@ -133,9 +131,7 @@ def _has_fresh_edges(db: Session, seed: str, source: CandidateSource, now: dt.da
     return existing is not None
 
 
-def store_edges(
-    db: Session, seed: str, candidates: list, now: dt.datetime, *, hop: int = 1
-) -> int:
+def store_edges(db: Session, seed: str, candidates: list, now: dt.datetime, *, hop: int = 1) -> int:
     """Write the edges a fetch produced. Existing edges are refreshed, never
     duplicated, and an edge is only ever moved closer to the roots."""
     written = 0

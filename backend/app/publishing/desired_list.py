@@ -213,9 +213,7 @@ def build_desired_list(
     )
     # Only tracks above the shared quality floor may enter a playlist, so the
     # availability counts have to be taken after that filter, not before.
-    eligible = [
-        item for item in pool.items if item.quality_expected >= QUALITY_EXPECTED_FLOOR
-    ]
+    eligible = [item for item in pool.items if item.quality_expected >= QUALITY_EXPECTED_FLOOR]
     available_familiar = sum(1 for item in eligible if item.familiarity == "FAMILIAR")
     available_discovery = sum(1 for item in eligible if item.familiarity == "DISCOVERY")
 

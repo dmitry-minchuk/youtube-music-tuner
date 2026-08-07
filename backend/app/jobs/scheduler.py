@@ -92,7 +92,8 @@ async def scheduler_loop(settings: Settings, catalog_factory=None) -> None:
         consecutive = consecutive + 1 if ran else 0
         if consecutive >= MAX_CONSECUTIVE_RUNS:
             logger.warning(
-                "scheduler ran %d jobs back to back, pausing", consecutive,
+                "scheduler ran %d jobs back to back, pausing",
+                consecutive,
                 extra={"operation": "scheduler"},
             )
             consecutive = 0

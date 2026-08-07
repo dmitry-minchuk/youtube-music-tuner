@@ -61,9 +61,7 @@ def _sessions_for(db: Session, video_ids: list[str]) -> list[PlaybackSession]:
     )
 
 
-def _window_counts(
-    sessions: list[PlaybackSession], now: dt.datetime
-) -> tuple[int, int, int, int]:
+def _window_counts(sessions: list[PlaybackSession], now: dt.datetime) -> tuple[int, int, int, int]:
     day = now - dt.timedelta(days=1)
     week = now - dt.timedelta(days=7)
     month = now - dt.timedelta(days=30)
@@ -110,9 +108,7 @@ def recompute_track_affinity(
     row.skips = sum(1 for s in sessions if _is_skip(s))
     row.replays = sum(1 for s in sessions if s.replayed)
     row.decayed_reward = _decayed_mean(rewards, now)
-    row.last_played_at = max(
-        (s.started_at for s in sessions if s.qualified), default=None
-    )
+    row.last_played_at = max((s.started_at for s in sessions if s.qualified), default=None)
     row.last_liked_at = max(
         (s.started_at for s in sessions if s.explicit_rating == "LIKE"), default=None
     )
