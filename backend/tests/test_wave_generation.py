@@ -498,6 +498,154 @@ def test_stale_warm_track_is_served_as_discovery(db_session) -> None:
     assert by_id.get("warm-stale") == "DISCOVERY"
 
 
+# -- negative taste (docs/05 section 11) ------------------------------------
+
+
+def _artist_affinity(db_session, artist: str, *, decayed: float, plays: int) -> None:
+    from app.persistence.models import ArtistAffinity
+
+    db_session.add(ArtistAffinity(artist_id=f"UC{artist}", decayed_reward=decayed, plays_all=plays))
+
+
+def test_negative_artist_history_sinks_the_candidate(db_session) -> None:
+    """Regression: negative artist affinity used to be clipped to zero, so an
+    artist you keep skipping ranked like an unknown one."""
+    build_pool(db_session, liked_count=2, discovery_count=0)
+    for name, video_id in (("Hated", "bad-1"), ("Neutral", "good-1")):
+        seed_track(db_session, video_id, artist=name)
+        seed_edge(db_session, "liked-0", video_id, rank=1)
+    _artist_affinity(db_session, "Hated", decayed=-0.9, plays=5)
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=80, length=4, random_seed=1))
+    order = [item.video_id for item in result.items]
+    assert order.index("good-1") < order.index("bad-1")
+
+
+def test_single_bad_session_is_a_nudge_not_a_sentence(db_session) -> None:
+    """The confidence multiplier keeps one accidental skip from burying an
+    artist forever: identical twins, one with a 1-play negative history,
+    must both stay in a queue that has room for everyone."""
+    build_pool(db_session, liked_count=2, discovery_count=6)
+    seed_track(db_session, "once-skipped", artist="OnceSkipped")
+    seed_edge(db_session, "liked-0", "once-skipped", rank=1)
+    _artist_affinity(db_session, "OnceSkipped", decayed=-0.635, plays=1)
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=80, length=9, random_seed=1))
+    assert "once-skipped" in {item.video_id for item in result.items}
+
+
+def test_vetoed_track_never_appears(db_session) -> None:
+    from app.persistence.models import TasteVeto
+
+    build_pool(db_session, liked_count=4, discovery_count=10)
+    db_session.add(TasteVeto(video_id="disc-0", artist_id="UCNew0"))
+    db_session.flush()
+
+    for temperature in (0, 50, 100):
+        result = generate_wave(db_session, WaveRequest(temperature=temperature, length=14))
+        assert all(item.video_id != "disc-0" for item in result.items)
+
+
+def test_veto_sinks_the_artists_other_tracks_but_not_likes(db_session) -> None:
+    from app.persistence.models import TasteVeto
+
+    build_pool(db_session, liked_count=2, discovery_count=0)
+    # Same artist: one vetoed, one sibling, one liked; plus a neutral twin.
+    seed_track(db_session, "veto-target", artist="VetoedArtist")
+    seed_track(db_session, "veto-sibling", artist="VetoedArtist")
+    seed_track(db_session, "veto-liked", artist="VetoedArtist", liked=True)
+    seed_track(db_session, "neutral", artist="NeutralArtist")
+    for video_id in ("veto-target", "veto-sibling", "veto-liked", "neutral"):
+        seed_edge(db_session, "liked-0", video_id, rank=1)
+    db_session.add(TasteVeto(video_id="veto-target", artist_id="UCVetoedArtist"))
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=80, length=6, random_seed=2))
+    order = [item.video_id for item in result.items]
+    by_id = {item.video_id: item for item in result.items}
+
+    assert "veto-target" not in order
+    assert "veto-liked" in order, "an explicit like outranks the artist veto"
+    if "veto-sibling" in by_id:
+        assert order.index("neutral") < order.index("veto-sibling")
+        assert "ARTIST_VETOED" in by_id["veto-sibling"].reason_codes
+    assert "ARTIST_VETOED" not in by_id["veto-liked"].reason_codes
+
+
+def test_veto_neighbourhood_steps_back(db_session) -> None:
+    """Candidates reached from a vetoed seed sink behind equal twins."""
+    from app.persistence.models import TasteVeto
+
+    build_pool(db_session, liked_count=2, discovery_count=0)
+    seed_track(db_session, "veto-seed", artist="VetoSeed")
+    seed_track(db_session, "neighbour", artist="Neighbour")
+    seed_track(db_session, "elsewhere", artist="Elsewhere")
+    seed_edge(db_session, "liked-0", "veto-seed", rank=1)
+    seed_edge(db_session, "veto-seed", "neighbour", rank=1)
+    seed_edge(db_session, "liked-0", "elsewhere", rank=1)
+    db_session.add(TasteVeto(video_id="veto-seed", artist_id="UCVetoSeed"))
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=80, length=5, random_seed=3))
+    order = [item.video_id for item in result.items]
+    assert "veto-seed" not in order
+    assert order.index("elsewhere") < order.index("neighbour")
+
+
+def test_publishing_pool_never_contains_a_vetoed_artists_non_likes(db_session) -> None:
+    from app.persistence.models import TasteVeto
+
+    build_pool(db_session, liked_count=4, discovery_count=10)
+    seed_track(db_session, "veto-target", artist="VetoedArtist")
+    seed_track(db_session, "veto-sibling", artist="VetoedArtist")
+    seed_track(db_session, "veto-liked", artist="VetoedArtist", liked=True)
+    for video_id in ("veto-target", "veto-sibling", "veto-liked"):
+        seed_edge(db_session, "liked-0", video_id, rank=1)
+    db_session.add(TasteVeto(video_id="veto-target", artist_id="UCVetoedArtist"))
+    db_session.flush()
+
+    result = generate_wave(
+        db_session, WaveRequest(temperature=50, length=17, for_publishing=True, random_seed=4)
+    )
+    served = {item.video_id for item in result.items}
+    assert "veto-target" not in served
+    assert "veto-sibling" not in served, "a published playlist must not surprise with the artist"
+    assert "veto-liked" in served
+
+
+def test_unveto_restores_the_track(db_session) -> None:
+    from app.persistence.models import TasteVeto
+
+    build_pool(db_session, liked_count=2, discovery_count=4)
+    db_session.add(TasteVeto(video_id="disc-1", artist_id="UCNew1"))
+    db_session.flush()
+
+    first = generate_wave(db_session, WaveRequest(temperature=50, length=6, random_seed=5))
+    assert all(item.video_id != "disc-1" for item in first.items)
+    _rollback_generation(db_session, first)
+
+    veto = db_session.get(TasteVeto, "disc-1")
+    db_session.delete(veto)
+    db_session.flush()
+
+    second = generate_wave(db_session, WaveRequest(temperature=50, length=6, random_seed=5))
+    assert any(item.video_id == "disc-1" for item in second.items)
+
+
+def test_graph_frontier_skips_vetoed_nodes(db_session) -> None:
+    from app.persistence.models import TasteVeto
+    from app.recommender.graph import frontier
+
+    build_pool(db_session, liked_count=3, discovery_count=6)
+    db_session.add(TasteVeto(video_id="disc-2", artist_id="UCNew2"))
+    db_session.flush()
+
+    nodes = frontier(db_session, limit=50)
+    assert all(node.video_id != "disc-2" for node in nodes)
+
+
 # -- mood (docs/05 section 10) ---------------------------------------------
 
 

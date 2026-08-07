@@ -34,10 +34,12 @@ OAuth bootstrap в MVP выполняется CLI, а UI показывает п
 | POST | `/api/v1/sync` | поставить sync job с cooldown |
 | GET | `/api/v1/search?q=...` | кешированный/явный remote search |
 | PUT | `/api/v1/tracks/{videoId}/rating` | desired LIKE/DISLIKE/INDIFFERENT |
+| POST | `/api/v1/tracks/{videoId}/veto` | локальный сильный негатив (docs/05 §11) |
+| DELETE | `/api/v1/tracks/{videoId}/veto` | снять veto |
 
 Pagination cursor opaque; default page 50, maximum 200.
 
-Rating response возвращает `desiredState`, `revision` и `syncStatus`. Повторные PUT для одного `videoId` обновляют одну logical command; job dedupe key не включает state.
+Rating response возвращает `desiredState`, `revision`, `syncStatus` и `vetoed` (в обоих ответах — GET и PUT). Повторные PUT для одного `videoId` обновляют одну logical command; job dedupe key не включает state. Veto-эндпоинты не создают sync job: сигнал строго локальный. Telemetry-событие `veto_set` входит в allowlist и агрегируется как explicit DISLIKE.
 
 ## 4. Wave и queue
 

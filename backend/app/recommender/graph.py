@@ -32,6 +32,7 @@ from app.persistence.models import (
     CandidateEdge,
     LibraryTrackState,
     PlaybackSession,
+    TasteVeto,
     Track,
     TrackAffinity,
     utcnow,
@@ -98,7 +99,9 @@ def _seed_weights(db: Session, roots: set[str]) -> dict[str, float]:
 
     A liked track is a full vote. Everything else is worth its decayed reward
     mapped onto [0, 1], so a seed you keep skipping stops pulling its
-    neighbourhood into the pool.
+    neighbourhood into the pool. A vetoed track's opinion is worth nothing —
+    without the explicit zero its edges would still contribute the unplayed
+    default of 0.4 to every candidate they touch.
     """
     weights: dict[str, float] = {}
     rows = db.execute(select(TrackAffinity.video_id, TrackAffinity.decayed_reward)).all()
@@ -106,12 +109,12 @@ def _seed_weights(db: Session, roots: set[str]) -> dict[str, float]:
         weights[video_id] = max(0.0, min(1.0, (decayed_reward + 1.0) / 2.0))
     for video_id in roots:
         weights[video_id] = max(weights.get(video_id, 0.0), 0.85)
+    for video_id in db.scalars(select(TasteVeto.video_id)):
+        weights[video_id] = 0.0
     return weights
 
 
-def build_support(
-    db: Session, *, now: dt.datetime | None = None
-) -> dict[str, CandidateSupport]:
+def build_support(db: Session, *, now: dt.datetime | None = None) -> dict[str, CandidateSupport]:
     """Fold every stored edge into one row per candidate.
 
     Unlike the previous "best edge wins" collapse, the multiplicity is kept:
@@ -205,6 +208,9 @@ def frontier(
     negative = set(
         db.scalars(select(TrackAffinity.video_id).where(TrackAffinity.decayed_reward < 0.0)).all()
     )
+    # Vetoed nodes are never expanded: spending an external call on the
+    # neighbourhood of "don't like at all" is the budget at its worst.
+    vetoed = set(db.scalars(select(TasteVeto.video_id)).all())
     playable = set(
         db.scalars(
             select(Track.video_id).where(
@@ -222,11 +228,16 @@ def frontier(
     # Without this the walk deepens one cluster and the rest of the library is
     # never represented, which is exactly what "every wave sounds the same"
     # feels like from the outside.
-    for video_id in sorted(roots - expanded - disliked):
+    for video_id in sorted(roots - expanded - disliked - vetoed):
         nodes.append(FrontierNode(video_id=video_id, hop=0, priority=ROOT_PRIORITY))
 
     for row in support.values():
-        if row.video_id in expanded or row.video_id in disliked or row.video_id in negative:
+        if (
+            row.video_id in expanded
+            or row.video_id in disliked
+            or row.video_id in negative
+            or row.video_id in vetoed
+        ):
             continue
         if row.video_id in roots:
             continue
@@ -251,7 +262,5 @@ def frontier(
 def graph_size(db: Session) -> tuple[int, int]:
     """(edges, distinct candidates) — used for logging and diagnostics."""
     edges = db.scalar(select(func.count()).select_from(CandidateEdge)) or 0
-    candidates = (
-        db.scalar(select(func.count(func.distinct(CandidateEdge.candidate_video_id)))) or 0
-    )
+    candidates = db.scalar(select(func.count(func.distinct(CandidateEdge.candidate_video_id)))) or 0
     return int(edges), int(candidates)

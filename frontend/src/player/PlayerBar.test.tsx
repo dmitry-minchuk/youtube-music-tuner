@@ -6,7 +6,10 @@ const playerBarFixture = vi.hoisted(() => ({ state: "PAUSED" as "PAUSED" | "BUFF
 vi.mock("@/api/library", () => ({
   formatDuration: (seconds: number | null) => (seconds === null ? "--:--" : `0:${seconds}`),
   useSetRating: () => ({ mutate: vi.fn() }),
-  useTrackRating: () => ({ data: { desiredState: "LIKE", syncStatus: "SYNCED" } }),
+  useTrackRating: () => ({
+    data: { desiredState: "LIKE", syncStatus: "SYNCED", vetoed: false },
+  }),
+  useVeto: () => ({ mutate: vi.fn() }),
 }));
 
 vi.mock("@/player/playerStore", () => {

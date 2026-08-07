@@ -34,6 +34,7 @@ from app.persistence.models import (
     ManagedPlaylist,
     RemotePlaylist,
     RemotePlaylistItem,
+    TasteVeto,
     Track,
     TrackArtist,
     utcnow,
@@ -323,6 +324,9 @@ def get_rating(video_id: str, db: Session = Depends(get_session)) -> dict[str, A
     The UI needs this to show the like state and whether it synced; without
     it a click looks like nothing happened (docs/03 section 6).
     """
+    # A veto can exist without a LibraryTrackState row, so it is looked up
+    # independently of the rating state (docs/08 section 3).
+    vetoed = db.get(TasteVeto, video_id) is not None
     state = db.get(LibraryTrackState, video_id)
     if state is None:
         return {
@@ -332,6 +336,7 @@ def get_rating(video_id: str, db: Session = Depends(get_session)) -> dict[str, A
             "syncStatus": "SYNCED",
             "isLiked": False,
             "isDisliked": False,
+            "vetoed": vetoed,
         }
     return {
         "videoId": video_id,
@@ -340,6 +345,7 @@ def get_rating(video_id: str, db: Session = Depends(get_session)) -> dict[str, A
         "syncStatus": state.rating_sync_status,
         "isLiked": state.is_liked,
         "isDisliked": state.is_disliked,
+        "vetoed": vetoed,
     }
 
 
@@ -381,4 +387,40 @@ def set_rating(
         "desiredState": desired.value,
         "revision": state.rating_revision,
         "syncStatus": state.rating_sync_status,
+        # The frontend rebuilds its cached rating object from this response;
+        # dropping the veto flag here would silently un-press the button.
+        "vetoed": db.get(TasteVeto, video_id) is not None,
     }
+
+
+@router.post("/tracks/{video_id}/veto")
+def set_veto(video_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Local "Don't Like At All" (docs/05 s.11): never synced to YouTube.
+
+    The track leaves the pool, its artist and graph neighbourhood sink in
+    the ranking. The primary artist is snapshotted as a fallback; wave-time
+    resolution re-reads track_artists.
+    """
+    if db.get(Track, video_id) is None:
+        raise errors.ValidationFailed("unknown track")
+
+    if db.get(TasteVeto, video_id) is None:
+        artist_id = db.scalar(
+            select(TrackArtist.artist_id).where(
+                TrackArtist.track_id == video_id, TrackArtist.ordinal == 0
+            )
+        )
+        db.add(TasteVeto(video_id=video_id, artist_id=artist_id, created_at=utcnow()))
+        db.flush()
+
+    return {"videoId": video_id, "vetoed": True}
+
+
+@router.delete("/tracks/{video_id}/veto")
+def unset_veto(video_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Remove the veto; already-recorded sessions stay — history is history."""
+    row = db.get(TasteVeto, video_id)
+    if row is not None:
+        db.delete(row)
+        db.flush()
+    return {"videoId": video_id, "vetoed": False}

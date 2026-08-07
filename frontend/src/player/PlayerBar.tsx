@@ -1,4 +1,4 @@
-import { formatDuration, useSetRating, useTrackRating } from "@/api/library";
+import { formatDuration, useSetRating, useTrackRating, useVeto } from "@/api/library";
 import { currentTrack, usePlayerStore } from "@/player/playerStore";
 import { Icon } from "@/ui/Icon";
 import styles from "@/player/PlayerBar.module.css";
@@ -30,6 +30,7 @@ export function PlayerBar(): React.JSX.Element | null {
 
   const rating = useTrackRating(track?.videoId ?? null);
   const setRating = useSetRating();
+  const setVeto = useVeto();
 
   if (!track) return null;
 
@@ -38,6 +39,7 @@ export function PlayerBar(): React.JSX.Element | null {
   const buffering = state === "BUFFERING";
   const liked = rating.data?.desiredState === "LIKE";
   const disliked = rating.data?.desiredState === "DISLIKE";
+  const vetoed = rating.data?.vetoed === true;
   const syncStatus = rating.data?.syncStatus;
 
   // Clicking an active rating clears it, like every other player does.
@@ -46,6 +48,15 @@ export function PlayerBar(): React.JSX.Element | null {
     const desiredState = active ? "INDIFFERENT" : target;
     void store.rate(target);
     setRating.mutate({ videoId: track.videoId, desiredState });
+  };
+
+  // "Don't Like At All": local-only, stronger than a dislike — the track,
+  // its artist and its graph neighbourhood step back (docs/05 s.11).
+  // Setting it also skips ahead; removing it just clears the flag.
+  const toggleVeto = () => {
+    const next = !vetoed;
+    setVeto.mutate({ videoId: track.videoId, vetoed: next });
+    if (next) void store.vetoCurrent();
   };
 
   return (
@@ -108,6 +119,20 @@ export function PlayerBar(): React.JSX.Element | null {
         >
           <Icon name="dislike" size={17} />
           Dislike
+        </button>
+        <button
+          type="button"
+          className={vetoed ? `${styles.rateButton} ${styles.disliked}` : styles.rateButton}
+          onClick={toggleVeto}
+          aria-pressed={vetoed}
+          aria-label={
+            vetoed
+              ? "Remove 'not my thing'"
+              : "Not my thing — push this track, its artist and similar picks away"
+          }
+          title="Stronger than a dislike, stays on this machine"
+        >
+          Not my thing
         </button>
         {(liked || disliked) && syncStatus && (
           <span

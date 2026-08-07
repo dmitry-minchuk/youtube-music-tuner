@@ -92,6 +92,7 @@ const REASON_TEXT: Record<string, string> = {
   HIGH_UNCERTAINTY: "Discovery pick with high uncertainty",
   RADIO_SOURCE: "From the radio around a track you liked",
   MOOD_MATCH: "Matches the chosen context",
+  ARTIST_VETOED: "By an artist you marked 'not my thing' — the pool ran short",
 };
 
 export function humanizeReason(code: string): string {

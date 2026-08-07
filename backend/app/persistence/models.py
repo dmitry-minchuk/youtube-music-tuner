@@ -227,6 +227,22 @@ class RemoteHistoryItem(Base):
 # --------------------------------------------------------------------------
 
 
+class TasteVeto(Base):
+    """Local "Don't Like At All" (docs/05 s.11, docs/07 s.2).
+
+    Its own table because affinity aggregates are idempotently rebuilt from
+    sessions and cannot carry a manual signal. Never synced to YouTube.
+    """
+
+    __tablename__ = "taste_vetoes"
+
+    video_id: Mapped[str] = mapped_column(ForeignKey("tracks.video_id"), primary_key=True)
+    # Primary artist at veto time; wave-time resolution re-reads track_artists
+    # and only falls back to this snapshot.
+    artist_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class CandidateEdge(Base):
     __tablename__ = "candidate_edges"
 

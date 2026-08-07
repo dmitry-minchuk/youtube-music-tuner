@@ -27,11 +27,13 @@ from sqlalchemy.orm import Session
 
 from app.persistence.models import (
     ArtistAffinity,
+    CandidateEdge,
     FeatureSnapshot,
     LibraryTrackState,
     PlaybackSession,
     QueueGeneration,
     QueueItem,
+    TasteVeto,
     Track,
     TrackAffinity,
     TrackArtist,
@@ -111,6 +113,21 @@ REDISCOVER_BOOST = 0.35
 # graph does not ingest yet: they cannot narrow the pool, and the response
 # must say so instead of pretending to filter (docs/05 section 10).
 UNSUPPORTED_MOODS = frozenset({"FOCUS", "ENERGY", "CALM", "BACKGROUND"})
+
+# "Don't Like At All" (docs/05 s.11): the vetoed track leaves the pool, its
+# artist and graph neighbourhood sink in the ranking. The artist penalty is a
+# de-facto ban for unknown tracks; a familiar track with its own proven
+# positive history keeps half of its standing — the veto of a sibling must
+# not erase demonstrated enjoyment of this specific track.
+VETO_ARTIST_PENALTY = 0.8
+VETO_ARTIST_PENALTY_FAMILIAR = 0.4
+VETO_NEIGHBOR_PENALTY = 0.35
+
+# Negative artist history finally bites (docs/05 s.11) — scaled by evidence,
+# because the decayed mean of a single observation never fades by
+# construction: one accidental skip must be a nudge, not a life sentence.
+NEGATIVE_ARTIST_WEIGHT = 0.6
+NEGATIVE_ARTIST_CONFIDENCE_PLAYS = 3
 
 # How much agreement between several liked seeds may lift a candidate above
 # its plain source rank.
@@ -280,6 +297,34 @@ def _warm(db: Session, now: dt.datetime) -> set[str]:
             TrackAffinity.decayed_reward >= WARM_REWARD_FLOOR,
             TrackAffinity.last_played_at >= cutoff,
         )
+    ).all()
+    return set(rows)
+
+
+def _vetoes(db: Session) -> tuple[set[str], set[str]]:
+    """Vetoed tracks and their primary artists (docs/05 s.11).
+
+    The artist is resolved fresh from track_artists — a re-sync may reorder
+    credits — and the snapshot stored on the veto row is only the fallback
+    for tracks that later vanished from the catalogue.
+    """
+    rows = db.scalars(select(TasteVeto)).all()
+    vetoed = {row.video_id for row in rows}
+    current = _primary_artists(db, sorted(vetoed))
+    artists: set[str] = set()
+    for row in rows:
+        artist = current.get(row.video_id) or row.artist_id
+        if artist:
+            artists.add(artist)
+    return vetoed, artists
+
+
+def _veto_neighbors(db: Session, vetoed: set[str]) -> set[str]:
+    """Candidates the graph reached *from* a vetoed track."""
+    if not vetoed:
+        return set()
+    rows = db.scalars(
+        select(CandidateEdge.candidate_video_id).where(CandidateEdge.seed_video_id.in_(vetoed))
     ).all()
     return set(rows)
 
@@ -506,12 +551,28 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     error_cooldown = _error_cooldown(db, now)
     quarantined = skip_quarantine(db, now, protected=liked)
     support_by_id = build_support(db, now=now)
+    vetoed, vetoed_artists = _vetoes(db)
+    veto_neighbors = _veto_neighbors(db, vetoed)
 
     # The pool is the whole graph: edges are knowledge, not a cache.
     pool_ids = (liked | strong_positive | warm | set(support_by_id)) - blocked
+    pool_ids -= vetoed
     pool_ids -= error_cooldown
     pool_ids -= quarantined
     pool_ids -= request.exclude_video_ids
+
+    if request.for_publishing and vetoed_artists:
+        # A wave is ephemeral; a published playlist is a standing snapshot.
+        # A non-liked track by a vetoed artist landing in it would be a
+        # trust-destroying surprise, so it is excluded, not just penalised.
+        vetoed_artist_tracks = set(
+            db.scalars(
+                select(TrackArtist.track_id).where(
+                    TrackArtist.artist_id.in_(vetoed_artists), TrackArtist.ordinal == 0
+                )
+            ).all()
+        )
+        pool_ids -= vetoed_artist_tracks - liked
 
     playable = {
         row.video_id: row
@@ -663,6 +724,24 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         if video_id in rediscover_boost_ids:
             score += REDISCOVER_BOOST
 
+        # Negative taste bites (docs/05 s.11). The veto penalty and the
+        # negative-affinity penalty encode the same fact, so the stronger one
+        # applies — never the sum. Likes are exempt: an explicit like of this
+        # track outranks artist-level distaste.
+        artist_vetoed = False
+        if video_id not in liked:
+            negative_penalty = 0.0
+            if artist_row is not None and artist_row.decayed_reward < 0.0:
+                confidence = min(1.0, artist_row.plays_all / NEGATIVE_ARTIST_CONFIDENCE_PLAYS)
+                negative_penalty = NEGATIVE_ARTIST_WEIGHT * -artist_row.decayed_reward * confidence
+            veto_penalty = 0.0
+            if artist_id is not None and artist_id in vetoed_artists:
+                artist_vetoed = True
+                veto_penalty = VETO_ARTIST_PENALTY_FAMILIAR if familiar else VETO_ARTIST_PENALTY
+            score -= max(negative_penalty, veto_penalty)
+            if video_id in veto_neighbors:
+                score -= VETO_NEIGHBOR_PENALTY
+
         reasons = _reason_codes(
             familiar=familiar,
             liked=video_id in liked,
@@ -670,6 +749,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             support=support,
             affinity=affinities.get(video_id),
             now=now,
+            artist_vetoed=artist_vetoed,
         )
 
         candidates.append(
@@ -809,9 +889,14 @@ def _reason_codes(
     support: CandidateSupport | None,
     affinity: TrackAffinity | None,
     now: dt.datetime,
+    artist_vetoed: bool = False,
 ) -> tuple[str, ...]:
     """Deterministic explanations, never generated text (docs/06 section 4)."""
     codes: list[str] = []
+    if artist_vetoed:
+        # Transparency first: a track that made the wave despite its artist's
+        # veto must say so, and the three-code cap must not squeeze it out.
+        codes.append("ARTIST_VETOED")
     if liked:
         codes.append("LIKED_TRACK")
     elif familiar:

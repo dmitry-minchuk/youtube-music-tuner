@@ -97,6 +97,7 @@ def test_api_returns_revision_and_sync_status(authed_client: TestClient, db_sess
         "desiredState": "LIKE",
         "revision": 1,
         "syncStatus": "PENDING",
+        "vetoed": False,
     }
 
 
@@ -104,3 +105,65 @@ def test_rating_unknown_track_is_rejected(authed_client: TestClient) -> None:
     response = authed_client.put("/api/v1/tracks/nope/rating", json={"desiredState": "LIKE"})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# -- veto (docs/05 s.11, docs/08 s.3) ---------------------------------------
+
+
+def test_veto_round_trip(authed_client: TestClient, db_session) -> None:
+    """POST sets it with the artist snapshot, rating reads it, DELETE clears."""
+    from app.persistence.models import Artist, TasteVeto, TrackArtist
+
+    _seed_track(db_session)
+    db_session.add(Artist(artist_id="UCOne", name="One"))
+    db_session.add(TrackArtist(track_id="v1", artist_id="UCOne", ordinal=0))
+    db_session.commit()
+
+    response = authed_client.post("/api/v1/tracks/v1/veto")
+    assert response.status_code == 200
+    assert response.json() == {"videoId": "v1", "vetoed": True}
+
+    db_session.expire_all()
+    row = db_session.get(TasteVeto, "v1")
+    assert row is not None
+    assert row.artist_id is not None
+
+    rating = authed_client.get("/api/v1/tracks/v1/rating")
+    assert rating.json()["vetoed"] is True
+
+    response = authed_client.delete("/api/v1/tracks/v1/veto")
+    assert response.json() == {"videoId": "v1", "vetoed": False}
+    db_session.expire_all()
+    assert db_session.get(TasteVeto, "v1") is None
+
+
+def test_veto_unknown_track_is_rejected(authed_client: TestClient) -> None:
+    response = authed_client.post("/api/v1/tracks/nope/veto")
+    assert response.status_code == 400
+
+
+def test_veto_is_reported_even_without_library_state(authed_client: TestClient, db_session) -> None:
+    """A veto can exist for a track that has no rating row at all."""
+    from app.persistence.models import TasteVeto, Track
+
+    db_session.add(Track(video_id="loose", title="Loose", is_playable=True))
+    db_session.flush()
+    db_session.add(TasteVeto(video_id="loose"))
+    db_session.commit()
+
+    rating = authed_client.get("/api/v1/tracks/loose/rating")
+    assert rating.status_code == 200
+    assert rating.json()["vetoed"] is True
+
+
+def test_veto_set_event_aggregates_as_explicit_dislike() -> None:
+    from app.player.aggregation import SessionAccumulator, fold_event
+
+    accumulator = SessionAccumulator(session_id="s1", video_id="v1")
+    for event in (
+        {"type": "track_cued"},
+        {"type": "play_started"},
+        {"type": "veto_set"},
+    ):
+        fold_event(accumulator, event)
+    assert accumulator.explicit_rating == "DISLIKE"

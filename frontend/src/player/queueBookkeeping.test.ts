@@ -140,4 +140,18 @@ describe("queue bookkeeping", () => {
 
     expect(posted.calls.some((call) => call.path.endsWith("/extend"))).toBe(false);
   });
+
+  it("veto skips ahead to the next track", async () => {
+    usePlayerStore.setState({
+      queue: Array.from({ length: 10 }, (_, i) => track(`t${i}`)),
+      waveMeta: meta,
+    });
+    await usePlayerStore.getState().playIndex(0);
+    await flushMicrotasks();
+
+    await usePlayerStore.getState().vetoCurrent();
+    await flushMicrotasks();
+
+    expect(usePlayerStore.getState().index).toBe(1);
+  });
 });

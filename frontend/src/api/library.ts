@@ -94,6 +94,8 @@ export interface TrackRating {
   syncStatus: RatingSyncStatus;
   isLiked: boolean;
   isDisliked: boolean;
+  /** Local "Don't Like At All" — never synced to YouTube (docs/05 s.11). */
+  vetoed: boolean;
 }
 
 export function useTrackRating(videoId: string | null) {
@@ -126,6 +128,8 @@ export function useSetRating() {
         syncStatus: "PENDING",
         isLiked: desiredState === "LIKE",
         isDisliked: desiredState === "DISLIKE",
+        // Rebuilding the object must not silently un-press the veto button.
+        vetoed: old?.vetoed ?? false,
       }));
       return { previous };
     },
@@ -135,6 +139,34 @@ export function useSetRating() {
     onSuccess: (data, { videoId }) => {
       client.setQueryData(["rating", videoId], data);
       void client.invalidateQueries({ queryKey: ["library"] });
+    },
+  });
+}
+
+export function useVeto() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ videoId, vetoed }: { videoId: string; vetoed: boolean }) =>
+      vetoed
+        ? api.post<{ videoId: string; vetoed: boolean }>(
+            `/api/v1/tracks/${encodeURIComponent(videoId)}/veto`,
+          )
+        : api.delete<{ videoId: string; vetoed: boolean }>(
+            `/api/v1/tracks/${encodeURIComponent(videoId)}/veto`,
+          ),
+    onMutate: async ({ videoId, vetoed }) => {
+      await client.cancelQueries({ queryKey: ["rating", videoId] });
+      const previous = client.getQueryData<TrackRating>(["rating", videoId]);
+      if (previous) {
+        client.setQueryData<TrackRating>(["rating", videoId], { ...previous, vetoed });
+      }
+      return { previous };
+    },
+    onError: (_error, { videoId }, context) => {
+      if (context?.previous) client.setQueryData(["rating", videoId], context.previous);
+    },
+    onSettled: (_data, _error, { videoId }) => {
+      void client.invalidateQueries({ queryKey: ["rating", videoId] });
     },
   });
 }

@@ -32,6 +32,16 @@ UUID v4 используется для локальных `session_id`, `event_
 - `desired_rating`, `rating_revision`, `rating_synced_revision`, `rating_sync_status`;
 - `source_snapshot_id`, `updated_at`.
 
+### `taste_vetoes`
+
+Локальный сильный негатив «Don't Like At All» (docs/05 §11). Отдельная таблица, потому что affinity-агрегаты идемпотентно пересобираются из сессий и не могут нести ручной сигнал:
+
+- `video_id` — PK, FK на `tracks`;
+- `artist_id` — основной артист на момент veto (snapshot-fallback; на волне артист разрешается заново из `track_artists`);
+- `created_at`.
+
+Никогда не синхронизируется в YouTube.
+
 ### `remote_playlists` и `remote_playlist_items`
 
 Snapshot удалённых плейлистов, включая порядок. Для каждого snapshot фиксируются `fetched_at`, `content_hash` и `track_count`.

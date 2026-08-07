@@ -156,6 +156,10 @@ def fold_event(acc: SessionAccumulator, event: dict[str, Any]) -> SessionAccumul
         acc.explicit_rating = "LIKE"
     elif event_type == "dislike_set":
         acc.explicit_rating = "DISLIKE"
+    elif event_type == "veto_set":
+        # "Don't Like At All" is a dislike-grade signal for learning; the
+        # pool exclusion itself lives in taste_vetoes (docs/05 s.11).
+        acc.explicit_rating = "DISLIKE"
     elif event_type == "seek_backward":
         acc.seek_backward_count = max(acc.seek_backward_count, 1)
     elif event_type == "seek_forward":

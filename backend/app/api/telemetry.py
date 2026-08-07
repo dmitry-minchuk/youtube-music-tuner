@@ -62,6 +62,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "replay_started",
         "like_set",
         "dislike_set",
+        "veto_set",
         "player_error",
         "visibility_changed",
         "page_closing",

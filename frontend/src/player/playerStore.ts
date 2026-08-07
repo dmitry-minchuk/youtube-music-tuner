@@ -68,6 +68,7 @@ interface PlayerStoreState {
   setVolume: (percent: number) => void;
   setPauseOnHidden: (value: boolean) => void;
   rate: (rating: "LIKE" | "DISLIKE") => Promise<void>;
+  vetoCurrent: () => Promise<void>;
   handleVisibilityChange: (hidden: boolean) => void;
   handlePageHide: () => void;
 }
@@ -334,6 +335,15 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
       const track = currentTrack(get());
       if (!track) return;
       await emitAndFlush(rating === "LIKE" ? "like_set" : "dislike_set");
+    },
+
+    /** "Don't Like At All": a dislike-grade signal on the real session, then
+     * move on — nobody presses this to keep listening (docs/05 s.11). */
+    async vetoCurrent() {
+      const track = currentTrack(get());
+      if (!track) return;
+      await emitAndFlush("veto_set");
+      await get().next();
     },
 
     handleVisibilityChange(hidden) {

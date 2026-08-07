@@ -72,7 +72,10 @@ Temperature slider показывает ожидаемый состав, нап�
 - `Related to …`;
 - `You usually finish this artist`;
 - `Not played for 8 months`;
-- `Discovery pick with high uncertainty`.
+- `Discovery pick with high uncertainty`;
+- `ARTIST_VETOED` → «By an artist you marked "not my thing"» — трек прошёл в волну несмотря на штраф артиста, и это не скрывается.
+
+В плеере рядом с `Like`/`Dislike` есть третья кнопка `Not my thing` («Don't Like At All», docs/05 §11): она ставит локальный veto на трек, его артиста и графовую окрестность и сразу переключает на следующий трек. Повторное нажатие снимает veto. В отличие от `Dislike`, сигнал никогда не уходит в YouTube.
 
 ## 5. Collection
 
