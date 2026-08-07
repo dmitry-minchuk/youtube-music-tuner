@@ -4,42 +4,42 @@
  * the end.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlayerPort } from "@/player/types";
 
 const posted = vi.hoisted(() => ({ calls: [] as { path: string; body: unknown }[] }));
+const patched = vi.hoisted(() => ({ calls: [] as { path: string; body: unknown }[] }));
+
+function waveResponse(queueId: string, videoIds: string[]) {
+  return {
+    queueId,
+    generationId: `gen-${queueId}`,
+    mix: { targetFamiliarPercent: 15, actualFamiliarPercent: 15, actualDiscoveryPercent: 85 },
+    relaxations: [],
+    items: videoIds.map((videoId, index) => ({
+      position: index + 1,
+      track: { videoId, title: videoId, artists: [] },
+      reasonCodes: [],
+      familiarity: "DISCOVERY",
+    })),
+  };
+}
 
 vi.mock("@/api/client", () => ({
   api: {
     post: (path: string, body?: unknown) => {
       posted.calls.push({ path, body });
       if (path.endsWith("/extend")) {
-        return Promise.resolve({
-          queueId: "q-ext",
-          generationId: "g-ext",
-          mix: { targetFamiliarPercent: 15, actualFamiliarPercent: 15, actualDiscoveryPercent: 85 },
-          relaxations: [],
-          items: [
-            {
-              position: 1,
-              track: { videoId: "fresh-1", title: "Fresh 1", artists: [] },
-              reasonCodes: [],
-              familiarity: "DISCOVERY",
-            },
-            {
-              position: 2,
-              track: { videoId: "b", title: "Already queued", artists: [] },
-              reasonCodes: [],
-              familiarity: "DISCOVERY",
-            },
-          ],
-        });
+        return Promise.resolve(waveResponse("q-ext", ["fresh-1", "b"]));
       }
       return Promise.resolve({});
     },
     get: vi.fn(),
     put: vi.fn(),
-    patch: vi.fn(),
+    patch: (path: string, body?: unknown) => {
+      patched.calls.push({ path, body });
+      return Promise.resolve(waveResponse("q-adapted", ["adapted-1", "adapted-2"]));
+    },
     delete: vi.fn(),
   },
 }));
@@ -53,7 +53,7 @@ vi.mock("@/player/telemetryClient", () => ({
   },
 }));
 
-import { usePlayerStore, type QueueTrack } from "@/player/playerStore";
+import { ADAPT_DEBOUNCE_MS, usePlayerStore, type QueueTrack } from "@/player/playerStore";
 
 function fakePort(): PlayerPort {
   return {
@@ -153,5 +153,78 @@ describe("queue bookkeeping", () => {
     await flushMicrotasks();
 
     expect(usePlayerStore.getState().index).toBe(1);
+  });
+});
+
+describe("adaptive tail retune (docs/04 s.8)", () => {
+  beforeEach(() => {
+    posted.calls = [];
+    patched.calls = [];
+    vi.useFakeTimers();
+    usePlayerStore.setState({
+      port: fakePort(),
+      queue: Array.from({ length: 10 }, (_, i) => track(`t${i}`)),
+      index: 0,
+      sessionId: null,
+      waveMeta: meta,
+      lastPlayedAt: {},
+      positionSeconds: 0,
+      durationSeconds: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a dislike advances and rebuilds the unplayed tail once", async () => {
+    await usePlayerStore.getState().playIndex(0);
+    await usePlayerStore.getState().dislikeCurrent();
+
+    expect(usePlayerStore.getState().index).toBe(1);
+    expect(patched.calls).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(ADAPT_DEBOUNCE_MS + 100);
+
+    expect(patched.calls).toHaveLength(1);
+    expect(patched.calls[0]?.path).toBe("/api/v1/waves/q1");
+    const queue = usePlayerStore.getState().queue.map((item) => item.videoId);
+    // Head (t0 started, t1 playing) survives; the tail is the adapted one.
+    expect(queue.slice(0, 2)).toEqual(["t0", "t1"]);
+    expect(queue.slice(2)).toEqual(["adapted-1", "adapted-2"]);
+    expect(usePlayerStore.getState().waveMeta?.queueId).toBe("q-adapted");
+  });
+
+  it("an early explicit next adapts the tail", async () => {
+    await usePlayerStore.getState().playIndex(0);
+    usePlayerStore.setState({ positionSeconds: 20, durationSeconds: 200 });
+
+    await usePlayerStore.getState().next();
+    await vi.advanceTimersByTimeAsync(ADAPT_DEBOUNCE_MS + 100);
+
+    expect(patched.calls).toHaveLength(1);
+  });
+
+  it("a late next is not a negative signal", async () => {
+    await usePlayerStore.getState().playIndex(0);
+    usePlayerStore.setState({ positionSeconds: 180, durationSeconds: 200 });
+
+    await usePlayerStore.getState().next();
+    await vi.advanceTimersByTimeAsync(ADAPT_DEBOUNCE_MS + 100);
+
+    expect(patched.calls).toHaveLength(0);
+  });
+
+  it("a run of quick skips costs one rebuild", async () => {
+    await usePlayerStore.getState().playIndex(0);
+
+    for (let i = 0; i < 3; i += 1) {
+      usePlayerStore.setState({ positionSeconds: 5, durationSeconds: 200 });
+      await usePlayerStore.getState().next();
+      await vi.advanceTimersByTimeAsync(300);
+    }
+    await vi.advanceTimersByTimeAsync(ADAPT_DEBOUNCE_MS + 100);
+
+    expect(patched.calls).toHaveLength(1);
   });
 });

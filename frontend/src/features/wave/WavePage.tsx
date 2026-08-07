@@ -12,7 +12,7 @@ import {
   type WaveResponse,
 } from "@/api/wave";
 import { humanizeReason } from "@/player/PlayerPanel";
-import { usePlayerStore, type QueueTrack } from "@/player/playerStore";
+import { mergeRetunedQueue, usePlayerStore, type QueueTrack } from "@/player/playerStore";
 import { Button } from "@/ui/Button";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
 import styles from "@/features/wave/WavePage.module.css";
@@ -49,25 +49,6 @@ function toQueueTracks(response: WaveResponse): QueueTrack[] {
     familiarity: item.familiarity,
     queueId: response.queueId,
   }));
-}
-
-/**
- * Keep everything that already started (the history must not be reshuffled,
- * docs/04 s.8) and replace the rest with the retuned tail, deduplicated so a
- * track cannot appear twice.
- */
-export function mergeRetunedQueue(
-  queue: QueueTrack[],
-  index: number,
-  lastPlayedAt: Record<string, number>,
-  retuned: QueueTrack[],
-): QueueTrack[] {
-  const current = queue[index];
-  const headEnd =
-    current && lastPlayedAt[current.videoId] !== undefined ? index + 1 : index;
-  const head = queue.slice(0, headEnd);
-  const known = new Set(head.map((track) => track.videoId));
-  return [...head, ...retuned.filter((track) => !known.has(track.videoId))];
 }
 
 /** One message per wave, most consequential code first (docs/05 s.9-10). */

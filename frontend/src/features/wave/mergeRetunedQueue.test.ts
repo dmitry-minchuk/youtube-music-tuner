@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeRetunedQueue } from "@/features/wave/WavePage";
-import type { QueueTrack } from "@/player/playerStore";
+import { mergeRetunedQueue, type QueueTrack } from "@/player/playerStore";
 
 function track(videoId: string, queueId = "q1"): QueueTrack {
   return { videoId, title: videoId, artists: [], durationSeconds: null, queueId };

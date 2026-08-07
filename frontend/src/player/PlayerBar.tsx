@@ -43,10 +43,13 @@ export function PlayerBar(): React.JSX.Element | null {
   const syncStatus = rating.data?.syncStatus;
 
   // Clicking an active rating clears it, like every other player does.
+  // Setting a dislike also moves on — staying on a rejected track makes no
+  // sense — and lets the queue tail adapt to the signal (docs/04 s.8).
   const rate = (target: "LIKE" | "DISLIKE") => {
     const active = target === "LIKE" ? liked : disliked;
     const desiredState = active ? "INDIFFERENT" : target;
-    void store.rate(target);
+    if (desiredState === "DISLIKE") void store.dislikeCurrent();
+    else void store.rate(target);
     setRating.mutate({ videoId: track.videoId, desiredState });
   };
 
