@@ -443,6 +443,61 @@ def test_empty_pool_returns_no_items_instead_of_failing(db_session) -> None:
     assert result.items == ()
 
 
+# -- familiarity classification (docs/05 section 9) -------------------------
+
+
+def test_warmth_expires_after_the_rediscovery_window(db_session) -> None:
+    """A single long-ago listen must not keep a track familiar forever.
+
+    The decayed reward of one observation never fades (weighted mean), so
+    without the recency condition a track heard once, months ago, stays on
+    the familiar side for good and crowds both quota and Rediscover.
+    """
+    from app.persistence.models import TrackAffinity as Affinity
+    from app.recommender.wave import _warm
+
+    for video_id, days in (("warm-fresh", 10), ("warm-stale", 100)):
+        seed_track(db_session, video_id, artist=video_id)
+        seed_edge(db_session, "warm-fresh", video_id, rank=1)
+        db_session.add(
+            Affinity(
+                video_id=video_id,
+                plays_all=1,
+                completions=1,
+                decayed_reward=0.6,
+                last_played_at=utcnow() - dt.timedelta(days=days),
+            )
+        )
+    db_session.flush()
+
+    warm = _warm(db_session, utcnow())
+    assert "warm-fresh" in warm
+    assert "warm-stale" not in warm
+
+
+def test_stale_warm_track_is_served_as_discovery(db_session) -> None:
+    build_pool(db_session, liked_count=2, discovery_count=8)
+    from app.persistence.models import TrackAffinity as Affinity
+
+    seed_track(db_session, "warm-stale", artist="Slept")
+    seed_edge(db_session, "liked-0", "warm-stale", rank=1)
+    db_session.add(
+        Affinity(
+            video_id="warm-stale",
+            plays_all=1,
+            completions=1,
+            decayed_reward=0.6,
+            last_played_at=utcnow() - dt.timedelta(days=100),
+        )
+    )
+    db_session.flush()
+
+    # Length covers the whole pool, so the track is guaranteed to appear.
+    result = generate_wave(db_session, WaveRequest(temperature=50, length=11, random_seed=6))
+    by_id = {item.video_id: item.familiarity for item in result.items}
+    assert by_id.get("warm-stale") == "DISCOVERY"
+
+
 # -- mood (docs/05 section 10) ---------------------------------------------
 
 

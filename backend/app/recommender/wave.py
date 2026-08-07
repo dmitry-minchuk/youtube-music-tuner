@@ -265,12 +265,20 @@ def _strong_positive(db: Session) -> set[str]:
     return set(rows)
 
 
-def _warm(db: Session) -> set[str]:
-    """Played before and still positive on the decayed average."""
+def _warm(db: Session, now: dt.datetime) -> set[str]:
+    """Played recently enough and still positive on the decayed average.
+
+    The decayed reward is a weighted mean, so a single observation never
+    fades by construction — "still feel warm" therefore needs its own clock.
+    After the rediscovery window the track goes back to the discovery side,
+    where the Rediscover context can pick it up (docs/05 section 9).
+    """
+    cutoff = now - dt.timedelta(days=REDISCOVERY_DAYS)
     rows = db.scalars(
         select(TrackAffinity.video_id).where(
             TrackAffinity.plays_all > 0,
             TrackAffinity.decayed_reward >= WARM_REWARD_FLOOR,
+            TrackAffinity.last_played_at >= cutoff,
         )
     ).all()
     return set(rows)
@@ -493,7 +501,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     blocked = _blocked(db)
     liked = _liked(db)
     strong_positive = _strong_positive(db)
-    warm = _warm(db)
+    warm = _warm(db, now)
     proven = _proven_playable(db)
     error_cooldown = _error_cooldown(db, now)
     quarantined = skip_quarantine(db, now, protected=liked)
