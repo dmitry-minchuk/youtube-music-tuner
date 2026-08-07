@@ -7,9 +7,15 @@
  */
 
 import { create } from "zustand";
+import { api } from "@/api/client";
+import type { WaveResponse } from "@/api/wave";
 import { PlaybackTracker, SAMPLE_INTERVAL_MS } from "@/player/playbackTracker";
 import { TelemetryClient } from "@/player/telemetryClient";
 import type { PlayerPort, PlayerState, TelemetryEventType } from "@/player/types";
+
+/** How close to the end the queue may get before it asks for more
+ * locally ranked material (docs/04 section 8: three tracks). */
+export const EXTEND_REMAINING_THRESHOLD = 3;
 
 export interface WaveMeta {
   queueId: string;
@@ -29,6 +35,8 @@ export interface QueueTrack {
   thumbnailUrl?: string | null;
   reasonCodes?: string[];
   familiarity?: "FAMILIAR" | "DISCOVERY";
+  /** The wave that delivered this item; extensions bring their own id. */
+  queueId?: string;
 }
 
 interface PlayerStoreState {
@@ -147,6 +155,39 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
     if (nextIndex < get().queue.length) await startTrack(nextIndex);
   }
 
+  let extending = false;
+
+  /** Three tracks before the end, ask for more locally ranked material
+   * (docs/04 s.8). Purely local on the backend side — never a YouTube call. */
+  async function maybeExtend() {
+    const { queue, index, waveMeta } = get();
+    if (extending || !waveMeta || queue.length === 0) return;
+    if (queue.length - 1 - index > EXTEND_REMAINING_THRESHOLD) return;
+    extending = true;
+    try {
+      const response = await api.post<WaveResponse>(
+        `/api/v1/waves/${encodeURIComponent(waveMeta.queueId)}/extend`,
+      );
+      const known = new Set(get().queue.map((item) => item.videoId));
+      const appended = response.items
+        .filter((item) => !known.has(item.track.videoId))
+        .map((item) => ({
+          videoId: item.track.videoId,
+          title: item.track.title,
+          artists: item.track.artists,
+          durationSeconds: null,
+          reasonCodes: item.reasonCodes,
+          familiarity: item.familiarity,
+          queueId: response.queueId,
+        }));
+      if (appended.length > 0) set({ queue: [...get().queue, ...appended] });
+    } catch {
+      // The queue simply ends where it ends; the next wave is one click away.
+    } finally {
+      extending = false;
+    }
+  }
+
   async function startTrack(index: number) {
     const { queue, port } = get();
     const track = queue[index];
@@ -165,6 +206,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => {
       pausedByPolicy: false,
       lastPlayedAt: { ...get().lastPlayedAt, [track.videoId]: Date.now() },
     });
+
+    // Queue bookkeeping, not telemetry: a started track is marked played so
+    // a retune never re-offers it and Insights can count served items. It
+    // must never interrupt playback.
+    if (track.queueId) {
+      void api
+        .post(`/api/v1/waves/${encodeURIComponent(track.queueId)}/played`, {
+          videoId: track.videoId,
+        })
+        .catch(() => undefined);
+    }
+    void maybeExtend();
 
     await emit("track_cued");
     if (isReplay) await emit("replay_started");

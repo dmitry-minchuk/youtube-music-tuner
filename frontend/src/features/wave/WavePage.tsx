@@ -12,7 +12,7 @@ import {
   type WaveResponse,
 } from "@/api/wave";
 import { humanizeReason } from "@/player/PlayerPanel";
-import { usePlayerStore } from "@/player/playerStore";
+import { usePlayerStore, type QueueTrack } from "@/player/playerStore";
 import { Button } from "@/ui/Button";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
 import styles from "@/features/wave/WavePage.module.css";
@@ -39,6 +39,37 @@ function waveErrorMessage(error: unknown): string {
   return "Could not reach the local API.";
 }
 
+function toQueueTracks(response: WaveResponse): QueueTrack[] {
+  return response.items.map((item) => ({
+    videoId: item.track.videoId,
+    title: item.track.title,
+    artists: item.track.artists,
+    durationSeconds: null,
+    reasonCodes: item.reasonCodes,
+    familiarity: item.familiarity,
+    queueId: response.queueId,
+  }));
+}
+
+/**
+ * Keep everything that already started (the history must not be reshuffled,
+ * docs/04 s.8) and replace the rest with the retuned tail, deduplicated so a
+ * track cannot appear twice.
+ */
+export function mergeRetunedQueue(
+  queue: QueueTrack[],
+  index: number,
+  lastPlayedAt: Record<string, number>,
+  retuned: QueueTrack[],
+): QueueTrack[] {
+  const current = queue[index];
+  const headEnd =
+    current && lastPlayedAt[current.videoId] !== undefined ? index + 1 : index;
+  const head = queue.slice(0, headEnd);
+  const known = new Set(head.map((track) => track.videoId));
+  return [...head, ...retuned.filter((track) => !known.has(track.videoId))];
+}
+
 /** One message per wave, most consequential code first (docs/05 s.9-10). */
 export function relaxationMessage(codes: string[]): string | null {
   if (codes.includes("DISCOVERY_POOL_WIDENED")) {
@@ -59,6 +90,8 @@ export function WavePage(): React.JSX.Element {
   const [temperature, setTemperature] = useState(50);
   const [mood, setMood] = useState<Mood>("ANY");
   const retuneTimer = useRef<number | null>(null);
+  // Monotonic ticket for retunes: only the newest scheduled one may apply.
+  const retuneSeq = useRef(0);
 
   const learning = useLearningStatus();
   const createWave = useCreateWave();
@@ -94,35 +127,41 @@ export function WavePage(): React.JSX.Element {
     if (retuneTimer.current !== null) window.clearTimeout(retuneTimer.current);
   }, []);
 
+  const waveMetaOf = (response: WaveResponse, usedTemperature: number, usedMood: Mood) => ({
+    queueId: response.queueId,
+    generationId: response.generationId,
+    targetFamiliarPercent: response.mix.targetFamiliarPercent,
+    actualFamiliarPercent: response.mix.actualFamiliarPercent,
+    relaxations: response.relaxations,
+    temperature: usedTemperature,
+    mood: usedMood,
+  });
+
   const applyWave = (response: WaveResponse, usedTemperature: number, usedMood: Mood) => {
-    setQueue(
-      response.items.map((item) => ({
-        videoId: item.track.videoId,
-        title: item.track.title,
-        artists: item.track.artists,
-        durationSeconds: null,
-        reasonCodes: item.reasonCodes,
-        familiarity: item.familiarity,
-      })),
-      {
-        queueId: response.queueId,
-        generationId: response.generationId,
-        targetFamiliarPercent: response.mix.targetFamiliarPercent,
-        actualFamiliarPercent: response.mix.actualFamiliarPercent,
-        relaxations: response.relaxations,
-        temperature: usedTemperature,
-        mood: usedMood,
-      },
+    setQueue(toQueueTracks(response), waveMetaOf(response, usedTemperature, usedMood));
+  };
+
+  /** A retune replaces only the unplayed tail (docs/04 s.8, docs/06 s.4). */
+  const applyRetune = (response: WaveResponse, usedTemperature: number, usedMood: Mood) => {
+    const state = usePlayerStore.getState();
+    const merged = mergeRetunedQueue(
+      state.queue,
+      state.index,
+      state.lastPlayedAt,
+      toQueueTracks(response),
     );
+    setQueue(merged, waveMetaOf(response, usedTemperature, usedMood));
   };
 
   const startWave = () => {
     // A retune scheduled for the previous queue must not fire after the new
-    // wave lands and overwrite it (the PATCH would race the POST).
+    // wave lands and overwrite it (the PATCH would race the POST), and one
+    // already in flight must land in the bin, not on the new queue.
     if (retuneTimer.current !== null) {
       window.clearTimeout(retuneTimer.current);
       retuneTimer.current = null;
     }
+    retuneSeq.current += 1;
     createWave.mutate(
       { temperature, mood },
       {
@@ -139,16 +178,19 @@ export function WavePage(): React.JSX.Element {
     const queueId = waveMeta?.queueId;
     if (!queueId) return;
     if (retuneTimer.current !== null) window.clearTimeout(retuneTimer.current);
+    const seq = ++retuneSeq.current;
     retuneTimer.current = window.setTimeout(() => {
       patchWave.mutate(
         { queueId, temperature: nextTemperature, mood: nextMood },
         {
           onSuccess: (response, variables) => {
-            // The response carries a fresh queueId, so compare what the PATCH
-            // targeted with what is on stage now: a retune of a replaced queue
-            // must be dropped, not applied over the wave the user just started.
+            // Two guards against out-of-order arrivals: a newer retune (or a
+            // fresh wave) supersedes this one, and the PATCH target must be
+            // the queue that is still on stage — the response itself carries
+            // a fresh queueId, so compare the request, not the response.
+            if (seq !== retuneSeq.current) return;
             if (variables.queueId !== usePlayerStore.getState().waveMeta?.queueId) return;
-            applyWave(response, nextTemperature, nextMood);
+            applyRetune(response, nextTemperature, nextMood);
           },
         },
       );
