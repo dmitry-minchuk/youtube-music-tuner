@@ -64,7 +64,9 @@ class RemotePlaylist:
     playlist_id: str
     title: str
     description: str | None = None
-    track_count: int = 0
+    # None means the source did not report a size, which is not the same as
+    # an empty playlist (docs/03: system playlists omit the count).
+    track_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
