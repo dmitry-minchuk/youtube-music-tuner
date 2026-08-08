@@ -109,6 +109,14 @@ def create_setup_intent(
     manifest.status = "CREATING"
     manifest.setup_started_at = utcnow()
     manifest.setup_error_code = None
+    # A reused row (DELETED tombstone or an abandoned CREATING intent) is a
+    # brand-new playlist from here on: the previous life's publish pacing
+    # would block the first publish for a day, and its remembered preview
+    # would republish the very list the listener just deleted.
+    manifest.setup_finished_at = None
+    manifest.last_published_at = None
+    manifest.next_publish_after = None
+    manifest.proposed_desired_json = None
     db.add(manifest)
     db.flush()
     return manifest
@@ -274,7 +282,7 @@ def reconcile_setup(
     return SetupResult(manifest.managed_playlist_id, None, "CREATING", len(desired))
 
 
-DELETABLE_STATUSES = frozenset({"UNVERIFIED", "CLEANUP_REQUIRED", "ACTIVE"})
+DELETABLE_STATUSES = frozenset({"CREATING", "UNVERIFIED", "CLEANUP_REQUIRED", "ACTIVE"})
 
 
 def cleanup_setup_artifact(
@@ -285,7 +293,9 @@ def cleanup_setup_artifact(
     ACTIVE is deletable too: it is the listener's own playlist and the marker
     check still guarantees Tuner never touches anything it did not create.
     Refusing meant a playlist you disliked could not be removed from the app
-    at all.
+    at all. CREATING is deletable as well (docs/08 s.7: any status): an
+    abandoned intent without a remote id is pure local state, and one with an
+    id still passes the same marker check as everything else.
     """
     if manifest.status not in DELETABLE_STATUSES:
         raise OwnershipError("only a Tuner-owned playlist may be deleted")

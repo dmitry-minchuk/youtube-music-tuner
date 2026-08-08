@@ -55,6 +55,7 @@ export interface SetupResult {
   status: string;
   reasonCode?: string;
   errorCode?: string | null;
+  alreadyExisting?: boolean;
   effectiveTargetSize?: number;
   minimumPublishSize?: number;
   availableFamiliar?: number;
@@ -80,13 +81,18 @@ export function usePublishPlaylist() {
   });
 }
 
+export interface ReconcileResponse {
+  kind: Kind;
+  status: string;
+  playlistId: string | null;
+  errorCode: string | null;
+}
+
 export function useReconcilePlaylist() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (kind: Kind) =>
-      api.post<{ status: string; playlistId: string | null }>(
-        `/api/v1/managed-playlists/${kind}/reconcile`,
-      ),
+      api.post<ReconcileResponse>(`/api/v1/managed-playlists/${kind}/reconcile`),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["playlists"] }),
   });
 }

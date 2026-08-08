@@ -90,7 +90,7 @@ Temperature slider показывает ожидаемый состав, нап�
 
 Две секции:
 
-- `Tuner playlists` — Familiar, Balance, Discovery с lifecycle status, configured/effective size, last publish, pending diff и кнопками Preview/Publish now/Regenerate/Delete;
+- `Tuner playlists` — Familiar, Balance, Discovery с lifecycle status, configured/effective size, last publish, pending diff и кнопками Preview/Publish now/Regenerate/Delete. Набор действий зависит от состояния: ACTIVE — Publish/Delete playlist; UNVERIFIED, CLEANUP_REQUIRED и CREATING с remote ID — Verify/adopt + Delete setup artifact; CREATING без remote ID — Create on YouTube + Delete setup artifact. Удалённый плейлист исчезает из списка (это и есть подтверждение удаления), и появляется кнопка создания недостающих; результат Verify/adopt всегда показывается словами, а застрявший setup — своим `setupErrorCode`. Удалённый на YouTube плейлист может оставаться в списке «Your YouTube Music playlists» до следующего library sync — это кеш;
 - `Your YouTube Music playlists` — read-only карточки и действие `Play in Tuner`. Размер показывается как есть: YouTube не сообщает его для своих системных плейлистов, и такая карточка пишет «size not reported by YouTube», а не «0 tracks». Для Liked Music подставляется локально известное число лайков.
 
 ### Preview — это просмотр, а не счётчик

@@ -156,6 +156,33 @@ class FakeCatalog:
         self.deleted.append(playlist_id)
 
 
+class SetupCatalog(FakeCatalog):
+    """Catalogue whose create/verify behaviour tests can steer."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.created_id = "PLcreated"
+        self.create_error: Exception | None = None
+        self.verify_ids: list[str] | None = None
+        self.verify_marker: str | None = None
+
+    def create_private_playlist(self, title: str, description: str, video_ids: list[str]) -> str:
+        if self.create_error is not None:
+            raise self.create_error
+        self.created.append((title, description, list(video_ids)))
+        # The first create keeps the classic id; later ones must stay unique
+        # or the manifests would collide on the playlist_id constraint.
+        playlist_id = (
+            self.created_id if len(self.created) == 1 else f"{self.created_id}{len(self.created)}"
+        )
+        self.snapshots[playlist_id] = snapshot(
+            playlist_id,
+            self.verify_ids if self.verify_ids is not None else list(video_ids),
+            description=self.verify_marker if self.verify_marker is not None else description,
+        )
+        return playlist_id
+
+
 def snapshot(
     playlist_id: str, video_ids: list[str], description: str = ""
 ) -> RemotePlaylistSnapshot:

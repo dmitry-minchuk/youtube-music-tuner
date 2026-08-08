@@ -187,13 +187,13 @@ Explanation возвращает reason codes и числовые вкладчи
 | POST | `/api/v1/managed-playlists/setup` | создать либо reconcile три Tuner playlist после preview |
 | POST | `/api/v1/managed-playlists/{kind}/plan` | просмотр состава без внешних вызовов; `{"regenerate": true}` предлагает другой вариант |
 | POST | `/api/v1/managed-playlists/{kind}/publish` | поставить idempotent job |
-| POST | `/api/v1/managed-playlists/{kind}/reconcile` | проверить/adopt CREATING, UNVERIFIED или CLEANUP_REQUIRED exact marker |
+| POST | `/api/v1/managed-playlists/{kind}/reconcile` | проверить/adopt CREATING, UNVERIFIED или CLEANUP_REQUIRED exact marker; для DELETED — `400` |
 | DELETE | `/api/v1/managed-playlists/{kind}/setup-artifact` | после подтверждения удалить свой playlist в любом статусе, только exact remote ID с совпавшим marker |
 | GET | `/api/v1/publications/{id}` | state и verification |
 | GET | `/api/v1/managed-playlists/{kind}/backups` | доступные snapshots |
 | POST | `/api/v1/managed-playlists/{kind}/restore` | спланировать ручное восстановление |
 
-Publish request содержит `expectedRemoteHash` из preview. Если remote playlist изменён после preview, backend отвечает `409 REMOTE_CHANGED` и ничего не записывает.
+Publish пишет сохранённый на manifest preview (запрос без тела); защита от remote-изменений выполняется на сервере сравнением remote hash с последним верифицированным промежуточным состоянием (docs/03 §8, шаг 3) — расхождение даёт `409 REMOTE_CHANGED` без записи. `GET /api/v1/playlists` не возвращает manifests в статусе DELETED и включает `setupErrorCode` для незавершённых setup.
 
 `POST .../plan` возвращает **сам список**, а не только счётчики: массив `tracks` с `videoId`, `title`, `artists`, `familiarity` и `reasonCodes`, плюс `randomSeed` и `generatedAt`. Показанный список сохраняется на манифесте, поэтому повторный вызов возвращает его же, а `publish` записывает именно его — иначе публиковалось бы то, чего пользователь не видел. Тело `{"regenerate": true}` заменяет предложение новым кандидатом с другим seed.
 
@@ -216,7 +216,7 @@ Initial setup request также содержит accepted desired hash и resul
 
 Incremental response может иметь `PARTIAL` и возвращает `remainingItemChanges`, `remainingEstimatedRequests`, `nextContinuationAfter` и тот же `desiredHash`. Продолжение выполняется после 24 часов без требования 15 новых sessions, но только после повторных safety/ownership/hash/budget checks.
 
-`DELETE .../setup-artifact` принимает `expectedPlaylistId`, `expectedMarker` и явный `confirm=true` из свежего cleanup preview. Backend вызывает `delete_managed_playlist`, записывает fresh-read/delete в call ledger и возвращает `{"managedPlaylistId":"uuid","status":"DELETED"}` только при подтверждённом success либо remote not-found во время reconciliation. Marker mismatch даёт `403 PLAYLIST_NOT_MANAGED`; неоднозначный внешний ответ сохраняет CLEANUP_REQUIRED и возвращает retryable integration error без автоматического повтора.
+`DELETE .../setup-artifact` вызывается после явного подтверждения в UI (запрос без тела; kind в пути однозначно определяет manifest, а ID/marker берутся из него). Backend вызывает `delete_managed_playlist`, записывает fresh-read/delete в call ledger и возвращает `{"kind":"...","status":"DELETED"}` при подтверждённом success либо когда remote ID отсутствует (локальный intent). Marker mismatch даёт `403 PLAYLIST_NOT_MANAGED`; неоднозначный внешний ответ сохраняет CLEANUP_REQUIRED и возвращает retryable integration error без автоматического повтора. `POST .../setup` идемпотентен: ACTIVE kinds возвращаются с `alreadyExisting: true` без внешнего вызова.
 
 ## 8. Коды ошибок
 

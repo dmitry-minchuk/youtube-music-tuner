@@ -25,11 +25,22 @@ const KIND_LABELS: Record<Kind, string> = {
 };
 
 const NON_ACTIVE_HINT: Record<string, string> = {
-  CREATING: "Setup started, but no remote playlist is confirmed yet.",
+  CREATING:
+    "No playlist exists on YouTube for this slot yet. Create it, or delete the leftover intent.",
   UNVERIFIED: "Created remotely but not verified. Verify it or delete it before publishing.",
   CLEANUP_REQUIRED: "Several playlists match the marker. Resolve this before publishing.",
-  DELETED: "The setup artifact was removed.",
 };
+
+/** What Verify/adopt actually achieved, in words (docs/06 s.6). */
+function reconcileOutcome(status: string, playlistId: string | null): string {
+  if (status === "ACTIVE") return "Verified — the playlist matches what was written.";
+  if (status === "UNVERIFIED") return "Adopted a matching playlist, but its content differs.";
+  if (status === "CLEANUP_REQUIRED") return "Several playlists carry our marker — resolve manually.";
+  if (status === "CREATING" && !playlistId) {
+    return "No matching playlist found on YouTube — create it or delete this slot.";
+  }
+  return `Status: ${status.toLowerCase()}.`;
+}
 
 function publishError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -59,6 +70,7 @@ function describeTrackCount(count: number | null): string {
 
 /** A setup that skipped a playlist still returns 200, so say what happened. */
 function setupOutcome(result: SetupResult): string {
+  if (result.alreadyExisting) return "already exists — left untouched.";
   if (result.status === "SKIPPED_QUALITY") {
     if (result.reasonCode === "INSUFFICIENT_POOL") {
       const familiar = result.availableFamiliar ?? 0;
@@ -109,11 +121,15 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
   const publish = usePublishPlaylist();
   const reconcile = useReconcilePlaylist();
   const remove = useDeleteSetupArtifact();
+  const setup = useSetupPlaylists();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const setQueue = usePlayerStore((store) => store.setQueue);
   const playIndex = usePlayerStore((store) => store.playIndex);
 
   const isActive = playlist.status === "ACTIVE";
+  // An intent without a remote id has nothing to verify or adopt — the only
+  // way forward is creating the playlist (setup is idempotent, docs/03 s.8).
+  const needsCreation = playlist.status === "CREATING" && playlist.playlistId === null;
   const previewTracks = plan.data?.status === "READY" ? plan.data.tracks : [];
 
   /** Load the reviewed list into the player so it can be listened to. */
@@ -149,7 +165,12 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
           : "Never published"}
       </p>
 
-      {!isActive && <p className={styles.warn}>{NON_ACTIVE_HINT[playlist.status]}</p>}
+      {!isActive && (
+        <p className={styles.warn}>
+          {NON_ACTIVE_HINT[playlist.status]}
+          {playlist.setupErrorCode ? ` Last error: ${playlist.setupErrorCode}.` : ""}
+        </p>
+      )}
       {plan.data && <PlanSummary plan={plan.data} />}
       {previewTracks.length > 0 && (
         <div className={styles.preview}>
@@ -215,6 +236,15 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
       )}
       {publish.isError && <p className={styles.warn}>{publishError(publish.error)}</p>}
 
+      {reconcile.data && (
+        <p className={styles.meta} role="status">
+          {reconcileOutcome(reconcile.data.status, reconcile.data.playlistId)}
+          {reconcile.data.errorCode ? ` (${reconcile.data.errorCode})` : ""}
+        </p>
+      )}
+      {reconcile.isError && <p className={styles.warn}>{publishError(reconcile.error)}</p>}
+      {setup.isError && <p className={styles.warn}>{publishError(setup.error)}</p>}
+
       <div className={styles.actions}>
         <Button onClick={() => plan.mutate({ kind })} disabled={plan.isPending}>
           {plan.isPending ? "Checking…" : plan.data ? "Refresh preview" : "Preview"}
@@ -229,9 +259,19 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
             {publish.isPending ? "Publishing…" : "Publish now"}
           </Button>
         )}
-        {!isActive && (
+        {needsCreation && (
+          <Button
+            variant="primary"
+            onClick={() => setup.mutate()}
+            disabled={setup.isPending}
+            title="Setup skips playlists that already exist"
+          >
+            {setup.isPending ? "Creating…" : "Create on YouTube"}
+          </Button>
+        )}
+        {!isActive && !needsCreation && (
           <Button onClick={() => reconcile.mutate(kind)} disabled={reconcile.isPending}>
-            Verify / adopt
+            {reconcile.isPending ? "Verifying…" : "Verify / adopt"}
           </Button>
         )}
         {confirmingDelete ? (
@@ -242,11 +282,13 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
               setConfirmingDelete(false);
             }}
           >
-            {`Delete ${playlist.playlistId ?? "(none)"} from YouTube — confirm`}
+            {playlist.playlistId
+              ? `Delete ${playlist.playlistId} from YouTube — confirm`
+              : "Remove the local leftover — confirm"}
           </Button>
         ) : (
           <Button variant="danger" onClick={() => setConfirmingDelete(true)}>
-            {isActive ? "Delete playlist" : "Delete unverified"}
+            {isActive ? "Delete playlist" : "Delete setup artifact"}
           </Button>
         )}
       </div>
@@ -271,13 +313,17 @@ export function PlaylistsPage(): React.JSX.Element {
           title="Tuner playlists"
           description="Private, marker-verified and never touched without a preview"
           actions={
-            data && data.tunerPlaylists.length === 0 ? (
+            data && data.tunerPlaylists.length < 3 ? (
               <Button
                 variant="primary"
                 onClick={() => setup.mutate()}
                 disabled={setup.isPending}
               >
-                {setup.isPending ? "Creating…" : "Create the three playlists"}
+                {setup.isPending
+                  ? "Creating…"
+                  : data.tunerPlaylists.length === 0
+                    ? "Create the three playlists"
+                    : "Create missing playlists"}
               </Button>
             ) : undefined
           }

@@ -28,6 +28,7 @@ export interface TunerPlaylistDto {
   configuredTargetSize: number;
   lastPublishedAt: string | null;
   autoPublishEnabled: boolean;
+  setupErrorCode: string | null;
 }
 
 export interface RemotePlaylistDto {

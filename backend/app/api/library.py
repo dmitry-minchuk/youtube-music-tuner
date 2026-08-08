@@ -185,8 +185,13 @@ def list_playlists(db: Session = Depends(get_session)) -> dict[str, Any]:
                 row.last_published_at.isoformat() + "Z" if row.last_published_at else None
             ),
             "autoPublishEnabled": row.auto_publish_enabled,
+            # A stuck card must be able to explain itself (docs/06 s.6).
+            "setupErrorCode": row.setup_error_code,
         }
         for row in db.scalars(select(ManagedPlaylist))
+        # A DELETED row is a tombstone: hiding it is the "deleted" feedback,
+        # and it frees the create button to reappear (docs/06 s.6).
+        if row.status != "DELETED"
     ]
 
     return {"tunerPlaylists": tuner, "remotePlaylists": remote}

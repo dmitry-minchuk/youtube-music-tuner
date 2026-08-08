@@ -187,6 +187,31 @@ def setup_playlists(
     results: list[dict[str, Any]] = []
 
     for kind in PLAYLIST_KINDS:
+        existing = db.scalar(select(ManagedPlaylist).where(ManagedPlaylist.kind == kind))
+        if existing is not None and existing.status == "ACTIVE":
+            # Setup is idempotent: an ACTIVE playlist needs nothing, and
+            # falling through to a create would mint a duplicate on YouTube.
+            results.append(
+                {
+                    "kind": kind,
+                    "managedPlaylistId": existing.managed_playlist_id,
+                    "playlistId": existing.playlist_id,
+                    "status": "ACTIVE",
+                    "alreadyExisting": True,
+                    "errorCode": None,
+                }
+            )
+            continue
+        # A create that failed with a stored error may still have gone
+        # through remotely — adopt by marker before ever creating again
+        # (docs/03 s.8). Captured here because the intent reset clears it.
+        adopt_first = (
+            existing is not None
+            and existing.status == "CREATING"
+            and existing.playlist_id is None
+            and existing.setup_error_code is not None
+        )
+
         desired_result = build_desired_list(db, kind)
         if not desired_result.passed:
             results.append(
@@ -216,6 +241,10 @@ def setup_playlists(
                 manifest.status == "CREATING" and manifest.playlist_id is not None
             ):
                 outcome = reconcile_setup(db, manifest, catalog, desired)
+            elif adopt_first:
+                outcome = reconcile_setup(db, manifest, catalog, desired)
+                if outcome.status == "CREATING" and outcome.error_code is None:
+                    outcome = complete_setup(db, manifest, catalog, desired)
             else:
                 outcome = complete_setup(db, manifest, catalog, desired)
         except IntegrationError as exc:
@@ -243,6 +272,13 @@ def reconcile(
 ) -> dict[str, Any]:
     _guard_budget(db)
     manifest = _manifest(db, kind)
+    if manifest.status == "DELETED":
+        # Reconcile adopts and verifies; it never creates. Resurrecting a
+        # tombstone into CREATING made a deleted playlist look forever "in
+        # progress" (docs/03 s.8: DELETED is terminal for reconcile).
+        raise errors.ValidationFailed(
+            "the playlist was deleted — create it again from the Playlists page"
+        )
     # Verification compares the remote list against the hash recorded when the
     # playlist was written, so there is nothing to regenerate here.
     try:

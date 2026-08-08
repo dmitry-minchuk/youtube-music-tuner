@@ -17,31 +17,9 @@ from app.publishing.service import (
     reconcile_setup,
     require_writable,
 )
-from tests.fakes import FakeCatalog, snapshot
+from tests.fakes import FakeCatalog, SetupCatalog, snapshot
 
 INSTANCE = "inst-1"
-
-
-class SetupCatalog(FakeCatalog):
-    """Catalogue whose create/verify behaviour tests can steer."""
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.created_id = "PLcreated"
-        self.create_error: Exception | None = None
-        self.verify_ids: list[str] | None = None
-        self.verify_marker: str | None = None
-
-    def create_private_playlist(self, title: str, description: str, video_ids: list[str]) -> str:
-        if self.create_error is not None:
-            raise self.create_error
-        self.created.append((title, description, list(video_ids)))
-        self.snapshots[self.created_id] = snapshot(
-            self.created_id,
-            self.verify_ids if self.verify_ids is not None else list(video_ids),
-            description=self.verify_marker if self.verify_marker is not None else description,
-        )
-        return self.created_id
 
 
 def make_manifest(db, desired: list[str]) -> ManagedPlaylist:
@@ -451,3 +429,49 @@ def test_a_remotely_edited_playlist_still_fails_verification(db_session) -> None
     result = reconcile_setup(db_session, manifest, catalog, [])
     assert result.status == "UNVERIFIED"
     assert manifest.setup_error_code == "VERIFICATION_MISMATCH"
+
+
+# -- lifecycle after deletion (docs/03 s.8) ---------------------------------
+
+
+def test_create_setup_intent_reuse_resets_publish_pacing(db_session) -> None:
+    """A reused row is a brand-new playlist for publishing purposes.
+
+    Without the reset, publish -> delete -> recreate left the fresh playlist
+    blocked by the previous life's daily window, and Preview kept returning
+    the list the listener had just deleted.
+    """
+    import datetime as dt
+
+    from app.persistence.models import utcnow
+
+    manifest = make_manifest(db_session, ["v1"])
+    manifest.status = "DELETED"
+    manifest.playlist_id = None
+    manifest.last_published_at = utcnow()
+    manifest.next_publish_after = utcnow() + dt.timedelta(hours=20)
+    manifest.setup_finished_at = utcnow()
+    manifest.proposed_desired_json = {"tracks": [{"videoId": "old"}]}
+    db_session.flush()
+
+    reused = create_setup_intent(db_session, "BALANCE", INSTANCE, ["v2"])
+
+    assert reused.managed_playlist_id == manifest.managed_playlist_id
+    assert reused.status == "CREATING"
+    assert reused.last_published_at is None
+    assert reused.next_publish_after is None
+    assert reused.setup_finished_at is None
+    assert reused.proposed_desired_json is None
+
+
+def test_cleanup_deletes_a_creating_intent_without_remote_id(db_session) -> None:
+    """An abandoned intent is pure local state; deleting it must not 403."""
+    catalog = FakeCatalog()
+    manifest = make_manifest(db_session, ["v1"])
+    assert manifest.status == "CREATING"
+    assert manifest.playlist_id is None
+
+    status = cleanup_setup_artifact(db_session, manifest, catalog)
+
+    assert status == "DELETED"
+    assert catalog.deleted == []
