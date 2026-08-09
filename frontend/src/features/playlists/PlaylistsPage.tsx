@@ -14,6 +14,7 @@ import {
   type SetupResult,
 } from "@/api/publishing";
 import { usePlayerStore } from "@/player/playerStore";
+import { Busy } from "@/ui/Busy";
 import { Button } from "@/ui/Button";
 import { EmptyState, PageHeading, Panel } from "@/ui/Panel";
 import styles from "@/features/playlists/PlaylistsPage.module.css";
@@ -132,6 +133,20 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
   const needsCreation = playlist.status === "CREATING" && playlist.playlistId === null;
   const previewTracks = plan.data?.status === "READY" ? plan.data.tracks : [];
 
+  // Anything that leaves the machine (or ranks 360 tracks) takes visible
+  // time: a moving bar says "working", a frozen button says "hung".
+  const busyLabel = plan.isPending
+    ? "Building the preview — ranking the whole pool…"
+    : publish.isPending
+      ? "Publishing to YouTube…"
+      : setup.isPending
+        ? "Creating on YouTube and verifying…"
+        : reconcile.isPending
+          ? "Reading the playlist back from YouTube…"
+          : remove.isPending
+            ? "Deleting on YouTube…"
+            : null;
+
   /** Load the reviewed list into the player so it can be listened to. */
   const playPreview = (tracks: PlanTrack[], from = 0) => {
     setQueue(
@@ -236,7 +251,8 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
       )}
       {publish.isError && <p className={styles.warn}>{publishError(publish.error)}</p>}
 
-      {reconcile.data && (
+      {busyLabel && <Busy label={busyLabel} />}
+      {reconcile.data && !busyLabel && (
         <p className={styles.meta} role="status">
           {reconcileOutcome(reconcile.data.status, reconcile.data.playlistId)}
           {reconcile.data.errorCode ? ` (${reconcile.data.errorCode})` : ""}
@@ -329,7 +345,10 @@ export function PlaylistsPage(): React.JSX.Element {
           }
         >
           {isLoading && <p className={styles.meta}>Loading…</p>}
-          {data && data.tunerPlaylists.length === 0 && (
+          {setup.isPending && (
+            <Busy label="Creating the playlists on YouTube and verifying — up to a minute…" />
+          )}
+          {data && data.tunerPlaylists.length === 0 && !setup.isPending && (
             <EmptyState message="Not created yet. Preview first, then create them in one confirmed step." />
           )}
           {setup.isError && <p className={styles.warn}>{publishError(setup.error)}</p>}

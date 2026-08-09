@@ -135,6 +135,7 @@ def _violates(
 def _adjusted_score(
     candidate: RerankCandidate,
     chosen: Sequence[RerankCandidate],
+    chosen_ids: frozenset[str] | set[str],
     quota_pressure: float,
 ) -> float:
     score = candidate.score
@@ -147,7 +148,9 @@ def _adjusted_score(
         item.album_id == candidate.album_id for item in recent
     ):
         score -= SAME_ALBUM_PENALTY
-    if any(item.video_id == candidate.video_id for item in chosen):
+    # A set lookup, not a scan of the whole prefix: on a 360-item publishing
+    # pool the scan alone cost half a billion comparisons per preview.
+    if candidate.video_id in chosen_ids:
         score -= RECENT_TRACK_PENALTY
     if candidate.seed_video_id is not None:
         same_source = sum(1 for item in recent if item.seed_video_id == candidate.seed_video_id)
@@ -210,6 +213,7 @@ def rerank(
     result = RerankResult()
     remaining = list(candidates)
     chosen: list[RerankCandidate] = []
+    chosen_ids: set[str] = set()
     familiar_count = 0
     ladder_index = 0
     ceiling_hit = False
@@ -250,10 +254,13 @@ def rerank(
             else:
                 ceiling_hit = True
 
-        scored = [(_adjusted_score(item, chosen, quota_pressure), item) for item in allowed]
+        scored = [
+            (_adjusted_score(item, chosen, chosen_ids, quota_pressure), item) for item in allowed
+        ]
         best = _pick(scored, rng, tau)
         remaining.remove(best)
         chosen.append(best)
+        chosen_ids.add(best.video_id)
         if best.familiar:
             familiar_count += 1
 
