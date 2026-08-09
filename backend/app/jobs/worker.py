@@ -79,14 +79,18 @@ def handle_rating_sync(session: Session, job: Job, catalog: MusicCatalogPort) ->
 def handle_candidate_refresh(
     session: Session, job: Job, catalog: MusicCatalogPort
 ) -> dict[str, object]:
+    from app.recommender.farms import apply_farm_vetoes
+
     seed = job.payload_json.get("randomSeed")
     result = run_candidate_refresh(
         session, catalog, random_seed=int(seed) if isinstance(seed, int) else None
     )
+    farms = apply_farm_vetoes(session)
     return {
         "seeds": list(result.seeds),
         "edgesWritten": result.edges_written,
         "callsMade": result.calls_made,
+        "farmArtistsVetoed": [verdict.artist_name for verdict in farms],
     }
 
 
@@ -125,12 +129,17 @@ def handle_graph_expand(
 ) -> dict[str, object]:
     """Widen the candidate graph a few nodes at a time."""
     from app.jobs.graph_expand import run_graph_expansion
+    from app.recommender.farms import apply_farm_vetoes
 
     result = run_graph_expansion(session, catalog)
+    # New tracks just arrived: the moment to catch the farms among them
+    # before the next wave draws from the pool (docs/05 s.4).
+    farms = apply_farm_vetoes(session)
     return {
         "nodes": list(result.nodes_expanded),
         "edgesWritten": result.edges_written,
         "callsMade": result.calls_made,
+        "farmArtistsVetoed": [verdict.artist_name for verdict in farms],
         "graphEdges": result.edges_total,
         "graphCandidates": result.candidates_total,
     }

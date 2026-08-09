@@ -30,6 +30,36 @@ _PIPE_TAIL = re.compile(r"\|[^|]{3,30}$")
 TITLE_LENGTH_SUSPECT = 60
 
 
+_NORMALISE = re.compile(r"[#\w]*#\w+|\d+|[^\w\s]")
+
+
+def normalised_title(title: str) -> str:
+    """Lowercased title with hashtags, digits and punctuation stripped —
+    what remains of a farm's template after the per-track filler."""
+    return " ".join(_NORMALISE.sub(" ", title.lower()).split())
+
+
+def mean_title_similarity(titles: list[str], *, cap: int = 12) -> float:
+    """Average pairwise similarity of normalised titles, 0..1.
+
+    Farms fill a template ("Inspired by X – Artist (#Tag #Tag)" times N);
+    humans name songs. Capped to keep the O(n^2) comparison bounded.
+    """
+    from difflib import SequenceMatcher
+
+    normalised = [normalised_title(t) for t in titles[:cap]]
+    normalised = [t for t in normalised if t]
+    if len(normalised) < 2:
+        return 0.0
+    total = 0.0
+    pairs = 0
+    for i in range(len(normalised)):
+        for j in range(i + 1, len(normalised)):
+            total += SequenceMatcher(None, normalised[i], normalised[j]).ratio()
+            pairs += 1
+    return total / pairs
+
+
 def slop_score(title: str, artist_names: list[str]) -> int:
     """How much the metadata smells of mass generation, in whole points."""
     score = 0

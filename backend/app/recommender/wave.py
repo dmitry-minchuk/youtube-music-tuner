@@ -310,7 +310,7 @@ def _vetoes(db: Session) -> tuple[set[str], set[str]]:
     credits — and the snapshot stored on the veto row is only the fallback
     for tracks that later vanished from the catalogue.
     """
-    rows = db.scalars(select(TasteVeto)).all()
+    rows = db.scalars(select(TasteVeto).where(TasteVeto.source != "OVERRIDDEN")).all()
     vetoed = {row.video_id for row in rows}
     current = _primary_artists(db, sorted(vetoed))
     artists: set[str] = set()

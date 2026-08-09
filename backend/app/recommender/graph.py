@@ -109,7 +109,7 @@ def _seed_weights(db: Session, roots: set[str]) -> dict[str, float]:
         weights[video_id] = max(0.0, min(1.0, (decayed_reward + 1.0) / 2.0))
     for video_id in roots:
         weights[video_id] = max(weights.get(video_id, 0.0), 0.85)
-    for video_id in db.scalars(select(TasteVeto.video_id)):
+    for video_id in db.scalars(select(TasteVeto.video_id).where(TasteVeto.source != "OVERRIDDEN")):
         weights[video_id] = 0.0
     return weights
 
@@ -210,7 +210,9 @@ def frontier(
     )
     # Vetoed nodes are never expanded: spending an external call on the
     # neighbourhood of "don't like at all" is the budget at its worst.
-    vetoed = set(db.scalars(select(TasteVeto.video_id)).all())
+    vetoed = set(
+        db.scalars(select(TasteVeto.video_id).where(TasteVeto.source != "OVERRIDDEN")).all()
+    )
     playable = set(
         db.scalars(
             select(Track.video_id).where(

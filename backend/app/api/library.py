@@ -330,8 +330,10 @@ def get_rating(video_id: str, db: Session = Depends(get_session)) -> dict[str, A
     it a click looks like nothing happened (docs/03 section 6).
     """
     # A veto can exist without a LibraryTrackState row, so it is looked up
-    # independently of the rating state (docs/08 section 3).
-    vetoed = db.get(TasteVeto, video_id) is not None
+    # independently of the rating state (docs/08 section 3). An overridden
+    # auto-veto is inert and reads as "not vetoed".
+    veto_row = db.get(TasteVeto, video_id)
+    vetoed = veto_row is not None and veto_row.source != "OVERRIDDEN"
     state = db.get(LibraryTrackState, video_id)
     if state is None:
         return {
@@ -394,7 +396,7 @@ def set_rating(
         "syncStatus": state.rating_sync_status,
         # The frontend rebuilds its cached rating object from this response;
         # dropping the veto flag here would silently un-press the button.
-        "vetoed": db.get(TasteVeto, video_id) is not None,
+        "vetoed": ((row := db.get(TasteVeto, video_id)) is not None and row.source != "OVERRIDDEN"),
     }
 
 
@@ -409,7 +411,8 @@ def set_veto(video_id: str, db: Session = Depends(get_session)) -> dict[str, Any
     if db.get(Track, video_id) is None:
         raise errors.ValidationFailed("unknown track")
 
-    if db.get(TasteVeto, video_id) is None:
+    existing = db.get(TasteVeto, video_id)
+    if existing is None:
         artist_id = db.scalar(
             select(TrackArtist.artist_id).where(
                 TrackArtist.track_id == video_id, TrackArtist.ordinal == 0
@@ -417,15 +420,28 @@ def set_veto(video_id: str, db: Session = Depends(get_session)) -> dict[str, Any
         )
         db.add(TasteVeto(video_id=video_id, artist_id=artist_id, created_at=utcnow()))
         db.flush()
+    elif existing.source == "OVERRIDDEN":
+        # Pressing the button again after clearing an auto-veto is a fresh
+        # human decision.
+        existing.source = "MANUAL"
+        db.flush()
 
     return {"videoId": video_id, "vetoed": True}
 
 
 @router.delete("/tracks/{video_id}/veto")
 def unset_veto(video_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
-    """Remove the veto; already-recorded sessions stay — history is history."""
+    """Remove the veto; already-recorded sessions stay — history is history.
+
+    An auto-veto from the farm detector is kept as an inert OVERRIDDEN row:
+    deleting it outright would let the detector re-veto the artist on the
+    next run, fighting an explicit human decision (docs/05 s.4).
+    """
     row = db.get(TasteVeto, video_id)
     if row is not None:
-        db.delete(row)
+        if row.source == "FARM_AUTO":
+            row.source = "OVERRIDDEN"
+        else:
+            db.delete(row)
         db.flush()
     return {"videoId": video_id, "vetoed": False}

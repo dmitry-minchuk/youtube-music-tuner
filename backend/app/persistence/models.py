@@ -240,6 +240,10 @@ class TasteVeto(Base):
     # Primary artist at veto time; wave-time resolution re-reads track_artists
     # and only falls back to this snapshot.
     artist_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    # MANUAL — the button; FARM_AUTO — the farm detector (docs/05 s.4);
+    # OVERRIDDEN — an auto-veto the listener removed: kept inert so the
+    # detector never re-vetoes an artist against an explicit human decision.
+    source: Mapped[str] = mapped_column(String(16), default="MANUAL")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
 
 
