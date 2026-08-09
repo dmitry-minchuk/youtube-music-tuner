@@ -480,6 +480,48 @@ def test_a_remotely_edited_playlist_still_fails_verification(db_session) -> None
     assert manifest.setup_error_code == "VERIFICATION_MISMATCH"
 
 
+def test_a_partial_from_a_previous_life_is_superseded_not_continued(db_session) -> None:
+    """A PARTIAL continuation carries the snapshot of a deleted playlist:
+    continuing it against the recreated one is a guaranteed REMOTE_CHANGED
+    (observed live). Publish must retire it and start a fresh cycle."""
+    import datetime as dt
+
+    from app.persistence.models import PlaylistPublication, utcnow
+    from app.publishing.service import desired_hash
+
+    start = [f"old{index}" for index in range(20)]
+    manifest, _ = _active_manifest(db_session, start)
+    catalog = TrackingCatalog()
+    catalog.snapshots["PLcreated"] = snapshot("PLcreated", start, description=marker_for(INSTANCE))
+
+    stale = PlaylistPublication(
+        publication_id="stale-partial",
+        managed_playlist_id=manifest.managed_playlist_id,
+        status="PARTIAL",
+        quality_gate_version="playlist-gates-v2",
+        configured_target_size=20,
+        effective_target_size=20,
+        desired_snapshot_json={"videoIds": ["ghost-1", "ghost-2"]},
+        desired_hash=desired_hash(["ghost-1", "ghost-2"]),
+        expected_intermediate_hash="hash-of-a-playlist-that-no-longer-exists",
+        created_at=utcnow() - dt.timedelta(days=6),
+    )
+    db_session.add(stale)
+    manifest.setup_started_at = utcnow() - dt.timedelta(minutes=5)
+    db_session.flush()
+
+    desired = [f"new{index}" for index in range(20)]
+    catalog.desired_positions = {video: index for index, video in enumerate(desired)}
+    publication = publish_window(db_session, manifest, catalog, desired)
+
+    assert publication.publication_id != "stale-partial"
+    assert publication.error_code != "REMOTE_CHANGED"
+    assert publication.desired_hash == desired_hash(desired)
+    db_session.refresh(stale)
+    assert stale.status == "FAILED"
+    assert stale.error_code == "SUPERSEDED_BY_SETUP"
+
+
 # -- lifecycle after deletion (docs/03 s.8) ---------------------------------
 
 

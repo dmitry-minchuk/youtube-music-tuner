@@ -390,7 +390,7 @@ def _prune_backups(db: Session, manifest: ManagedPlaylist) -> None:
 
 
 def active_partial(db: Session, manifest: ManagedPlaylist) -> PlaylistPublication | None:
-    return db.scalar(
+    partial = db.scalar(
         select(PlaylistPublication)
         .where(
             PlaylistPublication.managed_playlist_id == manifest.managed_playlist_id,
@@ -399,6 +399,19 @@ def active_partial(db: Session, manifest: ManagedPlaylist) -> PlaylistPublicatio
         .order_by(PlaylistPublication.created_at.desc())
         .limit(1)
     )
+    if partial is None:
+        return None
+    # A continuation carries the snapshot and expected hash of a remote list
+    # that may no longer exist: the manifest row is reused across delete and
+    # recreate, so a PARTIAL from before the current setup began belongs to a
+    # previous playlist. Continuing it is a guaranteed REMOTE_CHANGED
+    # (docs/03 s.8) — retire it and let a fresh cycle start.
+    if manifest.setup_started_at is not None and partial.created_at < manifest.setup_started_at:
+        partial.status = "FAILED"
+        partial.error_code = "SUPERSEDED_BY_SETUP"
+        db.flush()
+        return None
+    return partial
 
 
 def publish_window(
