@@ -27,6 +27,8 @@ export interface TunerPlaylistDto {
   temperature: number;
   configuredTargetSize: number;
   lastPublishedAt: string | null;
+  /** Creation counts as the first edition (docs/06 s.6). */
+  contentUpdatedAt: string | null;
   autoPublishEnabled: boolean;
   setupErrorCode: string | null;
 }

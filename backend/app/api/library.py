@@ -184,6 +184,14 @@ def list_playlists(db: Session = Depends(get_session)) -> dict[str, Any]:
             "lastPublishedAt": (
                 row.last_published_at.isoformat() + "Z" if row.last_published_at else None
             ),
+            # Creation ships the full selection, so it counts as the first
+            # edition: "never published" right after setup would imply
+            # pending work where there is none (docs/06 s.6).
+            "contentUpdatedAt": (
+                (row.last_published_at or row.setup_finished_at).isoformat() + "Z"
+                if (row.last_published_at or row.setup_finished_at)
+                else None
+            ),
             "autoPublishEnabled": row.auto_publish_enabled,
             # A stuck card must be able to explain itself (docs/06 s.6).
             "setupErrorCode": row.setup_error_code,

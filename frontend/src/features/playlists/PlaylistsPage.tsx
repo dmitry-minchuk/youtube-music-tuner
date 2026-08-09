@@ -138,7 +138,7 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
   const busyLabel = plan.isPending
     ? "Building the preview — ranking the whole pool…"
     : publish.isPending
-      ? "Publishing to YouTube…"
+      ? "Refreshing the playlist on YouTube…"
       : setup.isPending
         ? "Creating on YouTube and verifying…"
         : reconcile.isPending
@@ -175,9 +175,9 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
         Temperature {playlist.temperature} · target {playlist.configuredTargetSize}
       </p>
       <p className={styles.meta}>
-        {playlist.lastPublishedAt
-          ? `Last publish ${new Date(playlist.lastPublishedAt).toLocaleString()}`
-          : "Never published"}
+        {playlist.contentUpdatedAt
+          ? `Contents from ${new Date(playlist.contentUpdatedAt).toLocaleString()}`
+          : "No contents yet"}
       </p>
 
       {!isActive && (
@@ -237,14 +237,14 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
       {publish.data && (
         <p className={styles.meta}>
           {publish.data.status === "COMPLETE"
-            ? "Published and verified."
+            ? "Refreshed and verified."
             : publish.data.status === "PARTIAL"
               ? `Partially applied — ${publish.data.remainingItemChanges} changes and ${publish.data.remainingEstimatedRequests} requests remain; continues after ${
                   publish.data.nextContinuationAfter
                     ? new Date(publish.data.nextContinuationAfter).toLocaleString()
                     : "the next window"
                 }.`
-              : `Publish ${publish.data.status.toLowerCase()}${
+              : `Refresh ${publish.data.status.toLowerCase()}${
                   publish.data.errorCode ? ` (${publish.data.errorCode})` : ""
                 }.`}
         </p>
@@ -270,9 +270,13 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
             variant="primary"
             onClick={() => publish.mutate(kind)}
             disabled={publish.isPending || !plan.data}
-            title={plan.data ? undefined : "Preview the list before publishing"}
+            title={
+              plan.data
+                ? "The playlist is already on YouTube — this applies the reviewed selection to it, changing only what differs"
+                : "Preview the selection before applying it"
+            }
           >
-            {publish.isPending ? "Publishing…" : "Publish now"}
+            {publish.isPending ? "Refreshing…" : "Refresh content"}
           </Button>
         )}
         {needsCreation && (
@@ -327,7 +331,7 @@ export function PlaylistsPage(): React.JSX.Element {
       <div className={styles.stack}>
         <Panel
           title="Tuner playlists"
-          description="Private, marker-verified and never touched without a preview"
+          description="Created already filled with a full selection; Refresh re-applies your current taste later, changing only what differs. Private and never touched without a preview."
           actions={
             data && data.tunerPlaylists.length < 3 ? (
               <Button

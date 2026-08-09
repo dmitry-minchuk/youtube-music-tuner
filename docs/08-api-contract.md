@@ -29,7 +29,7 @@ OAuth bootstrap в MVP выполняется CLI, а UI показывает п
 | Method | Path | Назначение |
 | --- | --- | --- |
 | GET | `/api/v1/library/tracks?view=liked&cursor=...` | локальный каталог |
-| GET | `/api/v1/playlists` | remote + managed summaries |
+| GET | `/api/v1/playlists` | remote + managed summaries; managed несут `contentUpdatedAt` — дата последнего издания контента (создание считается первым) |
 | GET | `/api/v1/playlists/{id}` | кешированный snapshot |
 | POST | `/api/v1/sync` | поставить sync job с cooldown |
 | GET | `/api/v1/search?q=...` | кешированный/явный remote search |
