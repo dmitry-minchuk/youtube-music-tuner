@@ -57,13 +57,27 @@ def test_id_is_registered_as_unverified_before_verification(db_session) -> None:
     desired = ["a", "b"]
     manifest = make_manifest(db_session, desired)
     catalog = SetupCatalog()
-    catalog.verify_ids = ["b", "a"]  # wrong order -> verification fails
+    catalog.verify_ids = ["a", "x"]  # different content -> verification fails
 
     result = complete_setup(db_session, manifest, catalog, desired)
 
     assert result.status == "UNVERIFIED"
     assert manifest.playlist_id == "PLcreated"
     assert manifest.setup_error_code == "VERIFICATION_MISMATCH"
+
+
+def test_reordered_insert_is_still_our_playlist(db_session) -> None:
+    """YouTube may land a batch insert in a different order (docs/03 s.8):
+    same set + marker + uniqueness is ACTIVE; publish restores the order."""
+    desired = ["a", "b", "c"]
+    manifest = make_manifest(db_session, desired)
+    catalog = SetupCatalog()
+    catalog.verify_ids = ["c", "a", "b"]  # same tracks, shuffled
+
+    result = complete_setup(db_session, manifest, catalog, desired)
+
+    assert result.status == "ACTIVE"
+    assert manifest.setup_error_code is None
 
 
 def test_marker_mismatch_leaves_the_manifest_unverified(db_session) -> None:

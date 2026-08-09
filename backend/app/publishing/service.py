@@ -208,8 +208,14 @@ def verify_setup(
     else:
         matches_order = list(snapshot.video_ids) == desired
     unique = len(set(snapshot.video_ids)) == len(snapshot.video_ids)
+    # YouTube does not guarantee batch-insert order: the same sixty tracks may
+    # land shuffled, reproducibly (docs/03 s.8). Marker + uniqueness + the
+    # exact same set is unambiguously our playlist; the first publish restores
+    # the order deterministically with its move operations. Only the setup
+    # path can check this — reconcile carries no reference list.
+    matches_set = bool(desired) and sorted(snapshot.video_ids) == sorted(desired)
 
-    if matches_marker and matches_order and unique:
+    if matches_marker and unique and (matches_order or matches_set):
         manifest.status = "ACTIVE"
         manifest.setup_finished_at = utcnow()
         manifest.setup_error_code = None
