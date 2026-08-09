@@ -125,7 +125,11 @@ export function PlayerBar(): React.JSX.Element | null {
         </button>
         <button
           type="button"
-          className={vetoed ? `${styles.rateButton} ${styles.disliked}` : styles.rateButton}
+          className={
+            vetoed
+              ? `${styles.rateButton} ${styles.veto} ${styles.vetoActive}`
+              : `${styles.rateButton} ${styles.veto}`
+          }
           onClick={toggleVeto}
           aria-pressed={vetoed}
           aria-label={
@@ -133,8 +137,9 @@ export function PlayerBar(): React.JSX.Element | null {
               ? "Remove 'not my thing'"
               : "Not my thing — push this track, its artist and similar picks away"
           }
-          title="Stronger than a dislike, stays on this machine"
+          title="Stronger than a dislike: also pushes away the artist and similar picks. Stays on this machine."
         >
+          <Icon name="ban" size={17} />
           Not my thing
         </button>
         {(liked || disliked) && syncStatus && (

@@ -10,6 +10,7 @@ export type IconName =
   | "pause"
   | "heart"
   | "dislike"
+  | "ban"
   | "volume";
 
 const PATHS: Record<IconName, React.JSX.Element> = {
@@ -56,6 +57,14 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <circle cx="12" cy="12" r="9" />
       <path d="m8.5 8.5 7 7M15.5 8.5l-7 7" />
+    </>
+  ),
+  // The full-diagonal strike escalates from dislike's small cross: not one
+  // track crossed out, the whole direction barred.
+  ban: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M5.64 5.64 18.36 18.36" />
     </>
   ),
   volume: (

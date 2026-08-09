@@ -179,6 +179,25 @@
   font-weight: 600;
 }
 
+/* "Not my thing" outranks a dislike: it bans a whole direction, so it wears
+   the danger tone even at rest — the visual weight IS the warning. */
+.veto {
+  border-color: rgba(255, 95, 86, 0.45);
+  color: var(--coral-400);
+}
+
+.veto:hover {
+  background: rgba(255, 95, 86, 0.12);
+  color: var(--coral-400);
+}
+
+.vetoActive {
+  border-color: var(--coral-500);
+  background: var(--coral-dim);
+  font-weight: 600;
+  box-shadow: 0 0 12px var(--coral-glow);
+}
+
 .sync {
   align-self: center;
   color: var(--text-muted);
