@@ -51,8 +51,24 @@ PLAYLIST_TITLES = {
 VERIFY_BACKOFF_SECONDS: tuple[float, ...] = (0.0, 2.0, 5.0)
 
 # In-place id canonicalisation is accepted for up to a tenth of the list
-# (at least one position) — docs/03 s.8.
+# (none at all for lists shorter than the divisor) — docs/03 s.8.
 SUBSTITUTION_TOLERANCE_DIVISOR = 10
+
+
+def matches_up_to_substitutions(actual: list[str], expected: list[str]) -> bool:
+    """Equal lists, allowing YouTube's in-place id canonicalisation.
+
+    An inserted track can be stored under the canonical id of the same song,
+    at the same position (docs/03 s.8). Anything beyond a tenth of the list
+    swapped in place — or any structural difference — is a real mismatch.
+    """
+    if actual == expected:
+        return True
+    if len(actual) != len(expected):
+        return False
+    swapped = sum(1 for got, want in zip(actual, expected, strict=True) if got != want)
+    return 0 < swapped <= len(expected) // SUBSTITUTION_TOLERANCE_DIVISOR
+
 
 PUBLISH_WINDOW = dt.timedelta(hours=24)
 MAX_BACKUPS = 30
@@ -223,14 +239,11 @@ def verify_setup(
     # the same song, in place, with every other position untouched (observed
     # live, docs/03 s.8). A list we just wrote, marker-matched, aligned at
     # every position but a few in-place swaps is unambiguously ours.
-    substituted_ok = False
-    if not matches_order and desired and len(snapshot.video_ids) == len(desired):
-        swapped = sum(
-            1 for want, got in zip(desired, snapshot.video_ids, strict=True) if want != got
-        )
-        # No floor: a list shorter than the divisor gets no substitution
-        # allowance at all, so a tiny playlist cannot be swapped wholesale.
-        substituted_ok = 0 < swapped <= len(desired) // SUBSTITUTION_TOLERANCE_DIVISOR
+    substituted_ok = (
+        not matches_order
+        and bool(desired)
+        and matches_up_to_substitutions(list(snapshot.video_ids), desired)
+    )
 
     if matches_marker and unique and (matches_order or matches_set or substituted_ok):
         manifest.status = "ACTIVE"
@@ -505,13 +518,15 @@ def publish_window(
     verified_ids = list(verification.video_ids)
     verified_hash = desired_hash(verified_ids)
 
-    if verified_ids == desired:
+    # Both comparisons tolerate in-place id canonicalisation (docs/03 s.8):
+    # the id the plan inserted may be stored as the song's canonical variant.
+    if matches_up_to_substitutions(verified_ids, desired):
         publication.status = "COMPLETE"
         publication.remaining_item_changes = 0
         publication.remaining_estimated_requests = 0
         manifest.last_published_at = now
         manifest.next_publish_after = now + PUBLISH_WINDOW
-    elif verified_ids == list(plan_slice.expected_order):
+    elif matches_up_to_substitutions(verified_ids, list(plan_slice.expected_order)):
         publication.status = "PARTIAL"
         publication.remaining_item_changes = plan_slice.remaining_item_changes
         publication.remaining_estimated_requests = plan_slice.remaining_requests

@@ -480,6 +480,43 @@ def test_a_remotely_edited_playlist_still_fails_verification(db_session) -> None
     assert manifest.setup_error_code == "VERIFICATION_MISMATCH"
 
 
+def test_publish_survives_id_canonicalisation_of_an_inserted_track(db_session) -> None:
+    """YouTube may store an inserted id as the song's canonical variant
+    (docs/03 s.8): the publish verification must not fail on the in-place
+    swap it cannot prevent."""
+
+    class CanonicalisingCatalog(TrackingCatalog):
+        def apply_playlist_diff(self, plan) -> None:
+            super().apply_playlist_diff(plan)
+            for playlist_id, snap in list(self.snapshots.items()):
+                ids = ["canon-7" if v == "new7" else v for v in snap.video_ids]
+                if list(snap.video_ids) != ids:
+                    self.snapshots[playlist_id] = snapshot(
+                        playlist_id, ids, description=snap.description or ""
+                    )
+
+    start = [f"old{index}" for index in range(12)]
+    manifest, _ = _active_manifest(db_session, start)
+    catalog = CanonicalisingCatalog()
+    catalog.snapshots["PLcreated"] = snapshot("PLcreated", start, description=marker_for(INSTANCE))
+
+    desired = [f"new{index}" for index in range(12)]
+    catalog.desired_positions = {video: index for index, video in enumerate(desired)}
+    catalog.desired_positions["canon-7"] = 7
+
+    publication = None
+    for _ in range(12):
+        publication = publish_window(db_session, manifest, catalog, desired)
+        if publication.status in {"COMPLETE", "FAILED"}:
+            break
+        db_session.flush()
+
+    assert publication is not None
+    assert publication.status == "COMPLETE", publication.error_code
+    remote = list(catalog.snapshots["PLcreated"].video_ids)
+    assert "canon-7" in remote and "new7" not in remote
+
+
 def test_a_partial_from_a_previous_life_is_superseded_not_continued(db_session) -> None:
     """A PARTIAL continuation carries the snapshot of a deleted playlist:
     continuing it against the recreated one is a guaranteed REMOTE_CHANGED
