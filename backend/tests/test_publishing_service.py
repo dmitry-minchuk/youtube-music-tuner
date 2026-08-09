@@ -80,6 +80,41 @@ def test_reordered_insert_is_still_our_playlist(db_session) -> None:
     assert manifest.setup_error_code is None
 
 
+def test_canonicalised_id_is_accepted_and_adopted(db_session) -> None:
+    """YouTube swaps an id for the same song's canonical variant, in place
+    (docs/03 s.8, observed live). The playlist is ours; the remote list is
+    adopted so later checks stop fighting the canonical id."""
+    from app.publishing.service import desired_hash
+
+    desired = [f"v{i}" for i in range(20)]
+    manifest = make_manifest(db_session, desired)
+    catalog = SetupCatalog()
+    remote = list(desired)
+    remote[7] = "canonical-7"  # one in-place substitution, order untouched
+    catalog.verify_ids = remote
+
+    result = complete_setup(db_session, manifest, catalog, desired)
+
+    assert result.status == "ACTIVE"
+    assert manifest.setup_error_code is None
+    assert manifest.accepted_desired_hash == desired_hash(remote)
+
+
+def test_too_many_substitutions_stay_unverified(db_session) -> None:
+    desired = [f"v{i}" for i in range(20)]
+    manifest = make_manifest(db_session, desired)
+    catalog = SetupCatalog()
+    remote = list(desired)
+    for index in (1, 4, 9):  # three of twenty is above the tenth tolerance
+        remote[index] = f"sub-{index}"
+    catalog.verify_ids = remote
+
+    result = complete_setup(db_session, manifest, catalog, desired)
+
+    assert result.status == "UNVERIFIED"
+    assert manifest.setup_error_code == "VERIFICATION_MISMATCH"
+
+
 def test_marker_mismatch_leaves_the_manifest_unverified(db_session) -> None:
     desired = ["a"]
     manifest = make_manifest(db_session, desired)

@@ -50,6 +50,10 @@ PLAYLIST_TITLES = {
 # readable. Each retry is one playlist request against the window budget.
 VERIFY_BACKOFF_SECONDS: tuple[float, ...] = (0.0, 2.0, 5.0)
 
+# In-place id canonicalisation is accepted for up to a tenth of the list
+# (at least one position) — docs/03 s.8.
+SUBSTITUTION_TOLERANCE_DIVISOR = 10
+
 PUBLISH_WINDOW = dt.timedelta(hours=24)
 MAX_BACKUPS = 30
 
@@ -215,10 +219,27 @@ def verify_setup(
     # path can check this — reconcile carries no reference list.
     matches_set = bool(desired) and sorted(snapshot.video_ids) == sorted(desired)
 
-    if matches_marker and unique and (matches_order or matches_set):
+    # YouTube canonicalises ids on insert: a track can land as another id of
+    # the same song, in place, with every other position untouched (observed
+    # live, docs/03 s.8). A list we just wrote, marker-matched, aligned at
+    # every position but a few in-place swaps is unambiguously ours.
+    substituted_ok = False
+    if not matches_order and desired and len(snapshot.video_ids) == len(desired):
+        swapped = sum(
+            1 for want, got in zip(desired, snapshot.video_ids, strict=True) if want != got
+        )
+        # No floor: a list shorter than the divisor gets no substitution
+        # allowance at all, so a tiny playlist cannot be swapped wholesale.
+        substituted_ok = 0 < swapped <= len(desired) // SUBSTITUTION_TOLERANCE_DIVISOR
+
+    if matches_marker and unique and (matches_order or matches_set or substituted_ok):
         manifest.status = "ACTIVE"
         manifest.setup_finished_at = utcnow()
         manifest.setup_error_code = None
+        if not matches_order:
+            # Adopt what YouTube actually stored, so later verifications and
+            # publish diffs do not keep fighting the canonical ids.
+            manifest.accepted_desired_hash = remote_hash
     else:
         manifest.setup_error_code = "VERIFICATION_MISMATCH"
         # Never "top up" or reshuffle automatically: leave it for a human.
