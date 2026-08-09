@@ -548,11 +548,12 @@ def test_vetoed_track_never_appears(db_session) -> None:
         assert all(item.video_id != "disc-0" for item in result.items)
 
 
-def test_veto_sinks_the_artists_other_tracks_but_not_likes(db_session) -> None:
+def test_veto_excludes_the_artists_non_likes_entirely(db_session) -> None:
+    """A vetoed artist is out of waves — only an explicit like survives
+    (docs/05 s.11: a penalty was not enough against mass-generated farms)."""
     from app.persistence.models import TasteVeto
 
     build_pool(db_session, liked_count=2, discovery_count=0)
-    # Same artist: one vetoed, one sibling, one liked; plus a neutral twin.
     seed_track(db_session, "veto-target", artist="VetoedArtist")
     seed_track(db_session, "veto-sibling", artist="VetoedArtist")
     seed_track(db_session, "veto-liked", artist="VetoedArtist", liked=True)
@@ -564,14 +565,11 @@ def test_veto_sinks_the_artists_other_tracks_but_not_likes(db_session) -> None:
 
     result = generate_wave(db_session, WaveRequest(temperature=80, length=6, random_seed=2))
     order = [item.video_id for item in result.items]
-    by_id = {item.video_id: item for item in result.items}
 
     assert "veto-target" not in order
+    assert "veto-sibling" not in order, "the artist's other non-likes must be gone too"
     assert "veto-liked" in order, "an explicit like outranks the artist veto"
-    if "veto-sibling" in by_id:
-        assert order.index("neutral") < order.index("veto-sibling")
-        assert "ARTIST_VETOED" in by_id["veto-sibling"].reason_codes
-    assert "ARTIST_VETOED" not in by_id["veto-liked"].reason_codes
+    assert "neutral" in order
 
 
 def test_veto_neighbourhood_steps_back(db_session) -> None:
@@ -644,6 +642,76 @@ def test_graph_frontier_skips_vetoed_nodes(db_session) -> None:
 
     nodes = frontier(db_session, limit=50)
     assert all(node.video_id != "disc-2" for node in nodes)
+
+
+# -- slop net (docs/05 section 4) -------------------------------------------
+
+
+def test_slop_score_calibration() -> None:
+    """Anchored to the live catalogue examples the thresholds were tuned on."""
+    from app.recommender.slop import slop_score
+
+    farm = slop_score(
+        "Dirty Glass – Daniele Gazzarin, Gazza70 (#Bluesrock #Country #RootsRock)",
+        ["Daniele Gazzarin - A.I. Art. Poesia in musica."],
+    )
+    assert farm >= 3
+
+    assert slop_score("The Singing Circuit", ["promptgenix"]) == 2
+    assert slop_score('Funk Pop Type Beat, Funky Type Beat ("feels")', ["DANNYEBTRACKS"]) >= 2
+    assert (
+        slop_score(
+            "Golden Hour Mirage – Premium Chillout Lounge Music for Endless Relaxation",
+            ["Deep Vocallo"],
+        )
+        >= 3
+    )
+
+    # Legitimate music must stay under every threshold.
+    assert slop_score("Déjà Vu", ["INJI"]) == 0
+    assert slop_score("Honey Boy (The Sponges Remix)", ["Purple Disco Machine"]) == 0
+    assert slop_score("Still (I Got Summer On My Mind) (FORTELLA Remix)", ["JJ"]) <= 1
+
+
+def test_obvious_slop_is_excluded_even_when_liked(db_session) -> None:
+    """Metadata that screams mass generation never reaches the wave; an
+    accidental like does not keep farm output in rotation (owner's call)."""
+    build_pool(db_session, liked_count=4, discovery_count=10)
+    seed_track(
+        db_session,
+        "slop-1",
+        artist="Cool Sound - A.I. Art. Poesia in musica.",
+    )
+    db_session.get(
+        Track, "slop-1"
+    ).title = "Dusty Roads – Cool Sound, Cool70 (#Bluesrock #Country #RootsRock #original)"
+    seed_track(db_session, "slop-liked", artist="Prompt Genius", liked=True)
+    db_session.get(Track, "slop-liked").title = "Neon Nights (#Synthwave #Retro #AIMusic)"
+    for video_id in ("slop-1", "slop-liked"):
+        seed_edge(db_session, "liked-0", video_id, rank=1)
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=80, length=16, random_seed=3))
+    served = {item.video_id for item in result.items}
+    assert "slop-1" not in served
+    assert "slop-liked" not in served
+
+
+def test_mild_slop_smell_is_a_penalty_not_a_ban(db_session) -> None:
+    """A single marker (an emoji, one hashtag) demotes the twin, never
+    removes it: the coarse net must not eat legitimate music."""
+    build_pool(db_session, liked_count=2, discovery_count=0)
+    seed_track(db_session, "smelly", artist="BorderCase")
+    db_session.get(Track, "smelly").title = "Sweet Dreams 🖤 | Dark Techno"
+    seed_track(db_session, "clean", artist="CleanCase")
+    for video_id in ("smelly", "clean"):
+        seed_edge(db_session, "liked-0", video_id, rank=1)
+    db_session.flush()
+
+    result = generate_wave(db_session, WaveRequest(temperature=80, length=4, random_seed=4))
+    order = [item.video_id for item in result.items]
+    assert "smelly" in order, "two points is a demotion, not an exclusion"
+    assert order.index("clean") < order.index("smelly")
 
 
 # -- mood (docs/05 section 10) ---------------------------------------------

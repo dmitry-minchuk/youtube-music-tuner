@@ -50,6 +50,12 @@ from app.recommender.rules import (
     rule_score,
     rule_to_quality_expected,
 )
+from app.recommender.slop import (
+    SLOP_EXCLUDE_SCORE,
+    SLOP_PENALTY,
+    SLOP_PENALTY_SCORE,
+    slop_score,
+)
 from app.recommender.temperature import (
     exploration_alpha,
     familiar_quota,
@@ -114,13 +120,9 @@ REDISCOVER_BOOST = 0.35
 # must say so instead of pretending to filter (docs/05 section 10).
 UNSUPPORTED_MOODS = frozenset({"FOCUS", "ENERGY", "CALM", "BACKGROUND"})
 
-# "Don't Like At All" (docs/05 s.11): the vetoed track leaves the pool, its
-# artist and graph neighbourhood sink in the ranking. The artist penalty is a
-# de-facto ban for unknown tracks; a familiar track with its own proven
-# positive history keeps half of its standing — the veto of a sibling must
-# not erase demonstrated enjoyment of this specific track.
-VETO_ARTIST_PENALTY = 0.8
-VETO_ARTIST_PENALTY_FAMILIAR = 0.4
+# "Don't Like At All" (docs/05 s.11): the vetoed track and every non-liked
+# track of its artist leave the pool outright; candidates the graph reached
+# through the vetoed track step back by this much.
 VETO_NEIGHBOR_PENALTY = 0.35
 
 # Negative artist history finally bites (docs/05 s.11) — scaled by evidence,
@@ -561,10 +563,11 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
     pool_ids -= quarantined
     pool_ids -= request.exclude_video_ids
 
-    if request.for_publishing and vetoed_artists:
-        # A wave is ephemeral; a published playlist is a standing snapshot.
-        # A non-liked track by a vetoed artist landing in it would be a
-        # trust-destroying surprise, so it is excluded, not just penalised.
+    if vetoed_artists:
+        # A vetoed artist is out — waves and publications alike. A penalty
+        # was not enough: with a thin discovery pool the penalised tracks
+        # still surfaced, and mass-generated farms need "never again"
+        # (docs/05 s.11). Only an explicit like survives the artist veto.
         vetoed_artist_tracks = set(
             db.scalars(
                 select(TrackArtist.track_id).where(
@@ -584,6 +587,18 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             )
         )
     }
+
+    # The slop net (docs/05 s.4): metadata heuristics against mass-generated
+    # content. Applied to every track, likes included — the owner's explicit
+    # call: an accidental like must not keep farm output in rotation.
+    slop_names = _artist_names(db, list(playable))
+    slop_penalized: set[str] = set()
+    for video_id in list(playable):
+        score_points = slop_score(playable[video_id].title, slop_names.get(video_id, []))
+        if score_points >= SLOP_EXCLUDE_SCORE:
+            del playable[video_id]
+        elif score_points >= SLOP_PENALTY_SCORE:
+            slop_penalized.add(video_id)
     pool_size = len(playable)
 
     familiar_pool = (liked | strong_positive | warm) & set(playable)
@@ -724,23 +739,18 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         if video_id in rediscover_boost_ids:
             score += REDISCOVER_BOOST
 
-        # Negative taste bites (docs/05 s.11). The veto penalty and the
-        # negative-affinity penalty encode the same fact, so the stronger one
-        # applies — never the sum. Likes are exempt: an explicit like of this
-        # track outranks artist-level distaste.
-        artist_vetoed = False
+        # Negative taste bites (docs/05 s.11). Vetoed artists never reach this
+        # loop (excluded from the pool); what remains is the accumulated
+        # negative history, the vetoed track's graph neighbourhood and the
+        # slop net. Likes are exempt from all of it.
         if video_id not in liked:
-            negative_penalty = 0.0
             if artist_row is not None and artist_row.decayed_reward < 0.0:
                 confidence = min(1.0, artist_row.plays_all / NEGATIVE_ARTIST_CONFIDENCE_PLAYS)
-                negative_penalty = NEGATIVE_ARTIST_WEIGHT * -artist_row.decayed_reward * confidence
-            veto_penalty = 0.0
-            if artist_id is not None and artist_id in vetoed_artists:
-                artist_vetoed = True
-                veto_penalty = VETO_ARTIST_PENALTY_FAMILIAR if familiar else VETO_ARTIST_PENALTY
-            score -= max(negative_penalty, veto_penalty)
+                score -= NEGATIVE_ARTIST_WEIGHT * -artist_row.decayed_reward * confidence
             if video_id in veto_neighbors:
                 score -= VETO_NEIGHBOR_PENALTY
+            if video_id in slop_penalized:
+                score -= SLOP_PENALTY
 
         reasons = _reason_codes(
             familiar=familiar,
@@ -749,7 +759,6 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
             support=support,
             affinity=affinities.get(video_id),
             now=now,
-            artist_vetoed=artist_vetoed,
         )
 
         candidates.append(
@@ -889,14 +898,9 @@ def _reason_codes(
     support: CandidateSupport | None,
     affinity: TrackAffinity | None,
     now: dt.datetime,
-    artist_vetoed: bool = False,
 ) -> tuple[str, ...]:
     """Deterministic explanations, never generated text (docs/06 section 4)."""
     codes: list[str] = []
-    if artist_vetoed:
-        # Transparency first: a track that made the wave despite its artist's
-        # veto must say so, and the three-code cap must not squeeze it out.
-        codes.append("ARTIST_VETOED")
     if liked:
         codes.append("LIKED_TRACK")
     elif familiar:
