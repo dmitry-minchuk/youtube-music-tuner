@@ -1,36 +1,36 @@
-# ADR-003: один контейнер и порт 43127
+# ADR-003: one container and port 43127
 
-- Статус: Accepted
-- Дата: 2026-08-01
-- Область: deployment
+- Status: Accepted
+- Date: 2026-08-01
+- Scope: deployment
 
-## Контекст
+## Context
 
-Проект личный, должен просто запускаться в Docker и предоставлять собственный web-player UI. Микросервисы, Kubernetes, Redis и отдельный model server не дают пользы одному пользователю, но увеличивают риск конфликтов и обслуживания.
+The project is personal, must simply run in Docker and provide its own web-player UI. Microservices, Kubernetes, Redis and a separate model server give no benefit to a single user, but increase the risk of conflicts and maintenance.
 
-Распространённые dev-порты часто заняты другими проектами. Нужен высокий, запоминаемый, но не знаменитый порт.
+Common dev ports are often taken by other projects. A high, memorable, but not well-known port is needed.
 
-## Решение
+## Decision
 
-- Собрать React frontend в multi-stage Dockerfile.
-- Раздавать static bundle и `/api` одним FastAPI runtime-container.
-- Использовать один Uvicorn worker, SQLite WAL, in-process persistent jobs и named volume `tuner-data:/data`.
-- Запускать runtime с фиксированными UID/GID `10001:10001`; `/data` подготавливается с тем же owner в image до первого mount.
-- Слушать внутри контейнера `43127`.
-- Публиковать по умолчанию `127.0.0.1:43127:43127`.
-- Разрешить override host port через `APP_PORT`.
+- Build the React frontend in a multi-stage Dockerfile.
+- Serve the static bundle and `/api` from a single FastAPI runtime container.
+- Use a single Uvicorn worker, SQLite WAL, in-process persistent jobs and the named volume `tuner-data:/data`.
+- Run the runtime with fixed UID/GID `10001:10001`; `/data` is prepared in the image with the same owner before the first mount.
+- Listen on `43127` inside the container.
+- Publish `127.0.0.1:43127:43127` by default.
+- Allow overriding the host port via `APP_PORT`.
 
-На момент выбора 2026-08-01 listener на TCP 43127 на машине отсутствовал.
+At the time of selection, 2026-08-01, there was no listener on TCP 43127 on the machine.
 
-## Последствия
+## Consequences
 
-Плюсы: один build/run, same-origin UI/API, простые backups, нет межсервисной сети, минимальные ресурсы.
+Pros: one build/run, same-origin UI/API, simple backups, no inter-service network, minimal resources.
 
-Минусы: один процесс объединяет HTTP и scheduler; долгие jobs должны быть короткими/асинхронными, а тяжёлое обучение в будущем потребует worker. Масштабирование на несколько пользователей не поддерживается.
+Cons: one process combines HTTP and the scheduler; long jobs must be short/asynchronous, and heavy training in the future will require a worker. Scaling to multiple users is not supported.
 
 ## Guardrails
 
-- job leases и idempotency обязательны даже при одном worker;
-- внешний bind нельзя менять на LAN без нового security ADR;
-- health/readiness не зависят от YouTube availability;
-- player `origin` строится из фактического browser origin, поэтому смена `APP_PORT` поддерживается.
+- job leases and idempotency are mandatory even with a single worker;
+- the external bind must not be changed to LAN without a new security ADR;
+- health/readiness do not depend on YouTube availability;
+- the player `origin` is built from the actual browser origin, so changing `APP_PORT` is supported.

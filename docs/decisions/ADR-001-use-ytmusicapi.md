@@ -1,69 +1,69 @@
-# ADR-001: использовать ytmusicapi
+# ADR-001: use ytmusicapi
 
-- Статус: Accepted
-- Дата: 2026-08-01
-- Область: YouTube Music integration
+- Status: Accepted
+- Date: 2026-08-01
+- Scope: YouTube Music integration
 
-## Контекст
+## Context
 
-Tuner должен читать лайки, плейлисты, историю и источники рекомендаций, а также создавать/изменять приватные плейлисты. Официальный YouTube Data API не предоставляет эквивалент всего YouTube Music web API. Для личного инструмента пользователь явно готов использовать неофициальную интеграцию, если библиотека актуальна и развивается.
+Tuner must read likes, playlists, history and recommendation sources, and also create/modify private playlists. The official YouTube Data API does not provide an equivalent of the whole YouTube Music web API. For a personal tool, the user is explicitly willing to use an unofficial integration if the library is current and under active development.
 
-## Проверенные факты
+## Verified facts
 
-- PyPI содержит `ytmusicapi 1.12.1`, опубликованную 2026-06-05 через Trusted Publishing.
-- В 2026 были релизы `1.11.5`, `1.12.0`, `1.12.1`; до этого выходила последовательность релизов в 2025.
-- Stable docs соответствуют `1.12.1`, latest docs уже имеют development version `1.12.2.dev...`.
-- В `main` были commits 2026-07-25: parser fix, тесты, lint/type-check maintenance.
-- Release 1.12.0 включал новые playlist/song-credit возможности, parser/browser fixes, документацию и нескольких contributors.
-- Reference покрывает `get_liked_songs`, `get_history`, `get_song_related`, `get_watch_playlist`, moods, library и playlist mutations.
-- Проект прямо называет себя `Unofficial API for YouTube Music`.
+- PyPI contains `ytmusicapi 1.12.1`, published on 2026-06-05 via Trusted Publishing.
+- In 2026 there were releases `1.11.5`, `1.12.0`, `1.12.1`; before that, a sequence of releases came out in 2025.
+- The stable docs correspond to `1.12.1`; the latest docs already have the development version `1.12.2.dev...`.
+- `main` had commits on 2026-07-25: parser fix, tests, lint/type-check maintenance.
+- Release 1.12.0 included new playlist/song-credit capabilities, parser/browser fixes, documentation and several contributors.
+- The reference covers `get_liked_songs`, `get_history`, `get_song_related`, `get_watch_playlist`, moods, library and playlist mutations.
+- The project explicitly calls itself `Unofficial API for YouTube Music`.
 
-Вывод: на дату решения библиотека живая, актуальная и активно поддерживаемая; для данного personal-use scope её можно использовать.
+Conclusion: as of the decision date the library is alive, current and actively maintained; it can be used for this personal-use scope.
 
-## Решение
+## Decision
 
-Использовать `ytmusicapi==1.12.1` в первой реализации и фиксировать exact version в lockfile.
+Use `ytmusicapi==1.12.1` in the first implementation and pin the exact version in the lockfile.
 
-Инкапсулировать библиотеку в `YouTubeMusicAdapter`, который реализует внутренний `MusicCatalogPort`. Domain, recommender и UI не работают с raw dictionaries библиотеки.
+Encapsulate the library in `YouTubeMusicAdapter`, which implements the internal `MusicCatalogPort`. Domain, recommender and UI do not work with the library's raw dictionaries.
 
-Воспроизведение не реализовывать через ytmusicapi или извлечение stream URL. Использовать официальный YouTube IFrame Player.
+Do not implement playback through ytmusicapi or by extracting stream URLs. Use the official YouTube IFrame Player.
 
-## Последствия
+## Consequences
 
-Положительные:
+Positive:
 
-- нужные YouTube Music операции доступны уже сейчас;
-- Python API хорошо подходит FastAPI backend;
-- есть документация, tests и активные исправления;
-- не нужен собственный reverse engineering client.
+- the required YouTube Music operations are available right now;
+- the Python API is a good fit for the FastAPI backend;
+- there is documentation, tests and active fixes;
+- no custom reverse-engineering client is needed.
 
-Отрицательные:
+Negative:
 
-- внутренний endpoint может измениться без backward compatibility;
-- Google официально не поддерживает эту библиотеку;
-- отдельные методы могут сломаться независимо от версии Tuner;
-- использование недокументированных API несёт policy/account risk даже для личного сценария.
+- an internal endpoint may change without backward compatibility;
+- Google does not officially support this library;
+- individual methods may break independently of the Tuner version;
+- using undocumented APIs carries policy/account risk even for a personal scenario.
 
-## Обязательные меры
+## Mandatory measures
 
-- pinned dependency и reproducible image;
+- pinned dependency and reproducible image;
 - adapter contract tests;
 - conservative TTL/call budget/backoff/circuit breaker;
 - no polling;
-- кешированная read-only деградация;
-- write только managed playlists с backup/diff/verify;
-- отдельный real smoke перед включением write после upgrade;
-- dependency health review минимум раз в квартал или при поломке.
+- cached read-only degradation;
+- write only to managed playlists with backup/diff/verify;
+- a separate real smoke test before enabling write after an upgrade;
+- dependency health review at least once a quarter or on breakage.
 
-## Проверка на реальном аккаунте (2026-08-01)
+## Real-account check (2026-08-01)
 
-Device flow с собственным OAuth client завершается успешно, но все вызовы internal API возвращают `HTTP 400 Bad Request`; неавторизованный `search` работает. Поэтому рабочим способом аутентификации выбран browser/cookie, а OAuth оставлен как резервный. Само решение использовать `ytmusicapi` остаётся в силе: библиотека и её парсеры исправны, ограничение лежит на стороне Google.
+Device flow with a self-made OAuth client completes successfully, but all internal API calls return `HTTP 400 Bad Request`; unauthenticated `search` works. Therefore browser/cookie was chosen as the working authentication method, and OAuth was kept as a fallback. The decision to use `ytmusicapi` itself stands: the library and its parsers work correctly, the limitation is on Google's side.
 
-## Условия пересмотра
+## Revisit conditions
 
-Пересмотреть решение, если нет compatible release/fix более 90 дней после подтверждённой поломки, OAuth становится неприемлемо рискованным, либо официальный API начинает покрывать нужные YouTube Music операции.
+Revisit the decision if there is no compatible release/fix more than 90 days after a confirmed breakage, if OAuth becomes unacceptably risky, or if the official API begins to cover the required YouTube Music operations.
 
-## Источники
+## Sources
 
 - [PyPI](https://pypi.org/project/ytmusicapi/)
 - [GitHub](https://github.com/sigma67/ytmusicapi)

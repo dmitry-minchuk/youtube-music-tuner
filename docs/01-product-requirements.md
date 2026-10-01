@@ -1,161 +1,161 @@
-# Продуктовые требования (BRD)
+# Product requirements (BRD)
 
-| Поле | Значение |
+| Field | Value |
 | --- | --- |
-| Продукт | YouTube Music Tuner |
-| Версия документа | 1.2.1 |
-| Дата | 2026-08-01 |
-| Владелец | единственный локальный пользователь |
-| Тип | personal-use, local-first, non-commercial |
-| Статус | approved for implementation |
+| Product | YouTube Music Tuner |
+| Document version | 1.2.1 |
+| Date | 2026-08-01 |
+| Owner | the single local user |
+| Type | personal-use, local-first, non-commercial |
+| Status | approved for implementation |
 
-## 1. Проблема
+## 1. Problem
 
-Обычные плейлисты пользователя со временем становятся однообразными, а автоматические рекомендации YouTube Music не дают достаточно понятного управления балансом между знакомой и новой музыкой. Сервис также не предоставляет пользователю богатую и прозрачную модель того, какие именно действия повлияли на подборку.
+The user's regular playlists become monotonous over time, and YouTube Music's automatic recommendations do not give sufficiently clear control over the balance between familiar and new music. The service also does not give the user a rich and transparent model of which specific actions influenced the selection.
 
-Нужен локальный слой, который:
+A local layer is needed that:
 
-- знает лайкнутые треки, существующие плейлисты и доступную историю;
-- видит фактическое поведение внутри собственного плеера;
-- отличает осознанный ранний пропуск от паузы, буферизации или закрытия вкладки;
-- формирует бесконечную очередь «Волна» с регулируемой температурой;
-- без ручной сборки поддерживает полезные приватные плейлисты в YouTube Music для прослушивания в официальном приложении, в том числе на iPhone;
-- не опрашивает YouTube Music постоянно и не переписывает плейлисты без необходимости.
+- knows the liked tracks, existing playlists and available history;
+- sees the actual behaviour inside its own player;
+- distinguishes a deliberate early skip from a pause, buffering or closing the tab;
+- builds an endless "Wave" queue with an adjustable temperature;
+- maintains, without manual assembly, useful private playlists in YouTube Music for listening in the official app, including on iPhone;
+- does not poll YouTube Music constantly and does not rewrite playlists without need.
 
-## 2. Видение
+## 2. Vision
 
-Tuner — спокойный персональный плеер, который начинает с уже известного вкуса, постепенно учится на поведении и объяснимо меняет подборку. Пользователь выбирает настроение и степень исследования нового; всё остальное происходит автоматически и локально.
+Tuner is a calm personal player that starts from already-known taste, gradually learns from behaviour and changes the selection in an explainable way. The user chooses the mood and the degree of exploration of new material; everything else happens automatically and locally.
 
-## 3. Целевой пользователь
+## 3. Target user
 
-Один технически грамотный владелец Google/YouTube Music-аккаунта. Многопользовательская модель, регистрация, биллинг, публичный доступ и коммерческая эксплуатация не планируются.
+A single technically literate owner of a Google/YouTube Music account. A multi-user model, registration, billing, public access and commercial operation are not planned.
 
-## 4. Цели
+## 4. Goals
 
-### 4.1. Продуктовые
+### 4.1. Product
 
-- Уменьшить долю ранних ручных пропусков относительно стартового baseline.
-- Сохранить узнаваемость музыкального вкуса, одновременно добавляя контролируемую новизну.
-- Дать одно действие для старта «Волны» и два простых регулятора: температура и контекст/настроение.
-- Сделать обучение непрерывным и не требующим ручного запуска.
-- Обеспечить полезный результат и в официальном YouTube Music через управляемые плейлисты.
+- Reduce the share of early manual skips relative to the starting baseline.
+- Preserve the recognisability of the musical taste while adding controlled novelty.
+- Provide one action to start the Wave and two simple controls: temperature and context/mood.
+- Make learning continuous and not requiring a manual start.
+- Provide a useful result in the official YouTube Music as well, through managed playlists.
 
-### 4.2. Технические
+### 4.2. Technical
 
-- Хранить сырую телеметрию и агрегаты только локально.
-- Отделить нестабильную интеграцию `ytmusicapi` от доменной логики.
-- Ограничить внешние вызовы cooldown, TTL-кешами, job-lock и incremental diff.
-- Обеспечить повторяемый запуск в Docker Compose на macOS с Apple Silicon.
+- Store raw telemetry and aggregates only locally.
+- Separate the unstable `ytmusicapi` integration from the domain logic.
+- Limit external calls with cooldown, TTL caches, job-lock and incremental diff.
+- Ensure a repeatable launch in Docker Compose on macOS with Apple Silicon.
 
-## 5. Не цели первой версии
+## 5. Non-goals of the first version
 
-- Копирование интерфейса, брендинга или исходного кода Яндекс Музыки.
-- Извлечение, скачивание, перекодирование или хранение аудиопотоков YouTube.
-- Воспроизведение из вкладки/экрана, который пользователь сейчас не просматривает, а также при скрытом или замаскированном iframe.
-- Полная замена официального мобильного клиента.
-- Синхронизация точных пропусков и длительности прослушивания из официального приложения: YouTube Music не предоставляет их Tuner.
-- Социальные функции, совместные плейлисты, подкасты, загрузка собственных файлов.
-- Обязательная внешняя LLM, облачная аналитика или отправка истории третьим сторонам.
-- Доступ из интернета или локальной сети без отдельной защищённой конфигурации.
+- Copying the interface, branding or source code of Yandex Music.
+- Extracting, downloading, transcoding or storing YouTube audio streams.
+- Playback from a tab/screen that the user is not currently viewing, or with a hidden or masked iframe.
+- A full replacement of the official mobile client.
+- Synchronising exact skips and listening duration from the official app: YouTube Music does not provide them to Tuner.
+- Social features, shared playlists, podcasts, uploading one's own files.
+- A mandatory external LLM, cloud analytics or sending history to third parties.
+- Access from the internet or the local network without a separate secured configuration.
 
-## 6. Основные сценарии
+## 6. Main use cases
 
-### UC-01. Первичное подключение
+### UC-01. Initial connection
 
-Пользователь создаёт OAuth client в Google Cloud, выполняет device flow, после чего Tuner подтверждает аккаунт и запускает начальную синхронизацию лайков, плейлистов и доступной истории.
+The user creates an OAuth client in Google Cloud and performs the device flow, after which Tuner confirms the account and starts the initial synchronisation of likes, playlists and available history.
 
-### UC-02. Запуск Волны
+### UC-02. Starting the Wave
 
-Пользователь открывает главную страницу, выбирает температуру и настроение, нажимает Play. Первая композиция начинает играть максимум после одного явного пользовательского действия, очередь уже подготовлена из локального кеша.
+The user opens the home page, chooses the temperature and mood, and presses Play. The first track starts playing after at most one explicit user action; the queue has already been prepared from the local cache.
 
-### UC-03. Обучение на слушании
+### UC-03. Learning from listening
 
-Во время воспроизведения Tuner локально учитывает реальное проигранное время, дослушивание, ранний переход к следующему треку, повтор, перемотку назад и явную оценку. После достаточного количества новых наблюдений модель обновляется автоматически.
+During playback Tuner locally accounts for the actual time played, listening to the end, an early move to the next track, a repeat, seeking backward and an explicit rating. After a sufficient number of new observations the model updates automatically.
 
-### UC-04. Управление температурой
+### UC-04. Temperature control
 
-При низкой температуре очередь опирается на лайки и близкие рекомендации; при высокой — расширяет круг артистов и источников, но не включает заблокированные или заведомо слабые кандидаты.
+At low temperature the queue relies on likes and close recommendations; at high temperature it widens the circle of artists and sources, but does not include blocked or known-weak candidates.
 
-### UC-05. Публикация в YouTube Music
+### UC-05. Publishing to YouTube Music
 
-После накопления нового сигнала и истечения cooldown Tuner пересчитывает три стабильных приватных плейлиста: `Tuner · Familiar`, `Tuner · Balance`, `Tuner · Discovery`. Он изменяет только собственные плейлисты, делает backup состава, применяет ограниченный diff и проверяет результат.
+After a new signal has accumulated and the cooldown has expired, Tuner recalculates three stable private playlists: `Tuner · Familiar`, `Tuner · Balance`, `Tuner · Discovery`. It changes only its own playlists, makes a backup of their contents, applies a bounded diff and verifies the result.
 
-### UC-06. Прослушивание на iPhone
+### UC-06. Listening on iPhone
 
-Пользователь открывает один из плейлистов Tuner в официальном приложении YouTube Music. Это прослушивание помогает общему профилю YouTube Music обычным способом, но точная телеметрия Tuner для него недоступна; при следующей редкой синхронизации можно получить только доступную историю.
+The user opens one of the Tuner playlists in the official YouTube Music app. This listening contributes to the overall YouTube Music profile in the usual way, but exact Tuner telemetry is unavailable for it; at the next infrequent synchronisation only the available history can be obtained.
 
-## 7. Функциональные требования
+## 7. Functional requirements
 
-| ID | Требование | Приоритет |
+| ID | Requirement | Priority |
 | --- | --- | --- |
-| FR-001 | Показывать состояние OAuth и понятный сценарий первичной авторизации. | Must |
-| FR-002 | Синхронизировать лайкнутые треки, библиотечные плейлисты и историю, доступную через `ytmusicapi`. | Must |
-| FR-003 | Показывать библиотеку и плейлисты из локального кеша без внешнего запроса на каждый экран. | Must |
-| FR-004 | Искать треки и добавлять выбранный результат в локальную очередь. | Should |
-| FR-005 | Воспроизводить треки по `videoId` через видимый YouTube IFrame Player. | Must |
-| FR-006 | Поддерживать play/pause, next, previous, seek, volume, queue и repeat. | Must |
-| FR-007 | Собирать версионированную, идемпотентную телеметрию с точным `played_seconds` и периодическим `progress_tick`, ограничивающим потерю прогресса при crash. | Must |
-| FR-008 | Давать явные like/dislike и синхронизировать их с YouTube Music с debounce. | Must |
-| FR-009 | Генерировать локальную очередь Волны без обращения к YouTube при каждом next. | Must |
-| FR-010 | Поддерживать температуру 0–100 и независимый контекст/настроение. | Must |
-| FR-011 | Объяснять включение трека короткими факторами: знакомый артист, похож на seed, давно не слушался, исследование нового. | Should |
-| FR-012 | Автоматически обучать модель только после достижения порога качественных сессий. | Must |
-| FR-013 | Автоматически обновлять только плейлисты, созданные и зарегистрированные Tuner. | Must |
-| FR-014 | Показывать время последней синхронизации, последнее обучение, следующий допустимый publish и расход API-бюджета. | Must |
-| FR-015 | Позволять отключить автопубликацию, удалить локальную телеметрию и отозвать подключение. | Must |
-| FR-016 | Создавать перед записью снимок удалённого плейлиста и уметь восстановить его вручную. | Must |
+| FR-001 | Show the OAuth state and a clear initial authorisation flow. | Must |
+| FR-002 | Synchronise liked tracks, library playlists and the history available through `ytmusicapi`. | Must |
+| FR-003 | Show the library and playlists from the local cache without an external request for every screen. | Must |
+| FR-004 | Search for tracks and add the selected result to the local queue. | Should |
+| FR-005 | Play tracks by `videoId` through a visible YouTube IFrame Player. | Must |
+| FR-006 | Support play/pause, next, previous, seek, volume, queue and repeat. | Must |
+| FR-007 | Collect versioned, idempotent telemetry with exact `played_seconds` and a periodic `progress_tick` that limits progress loss on a crash. | Must |
+| FR-008 | Provide explicit like/dislike and synchronise them with YouTube Music with debounce. | Must |
+| FR-009 | Generate the local Wave queue without contacting YouTube on every next. | Must |
+| FR-010 | Support temperature 0–100 and an independent context/mood. | Must |
+| FR-011 | Explain why a track was included with short factors: familiar artist, similar to a seed, not played for a long time, exploring new music. | Should |
+| FR-012 | Train the model automatically only after the threshold of quality sessions is reached. | Must |
+| FR-013 | Automatically update only playlists created and registered by Tuner. | Must |
+| FR-014 | Show the time of the last synchronisation, the last training, the next allowed publish and the API budget consumption. | Must |
+| FR-015 | Allow disabling auto-publishing, deleting local telemetry and revoking the connection. | Must |
+| FR-016 | Create a snapshot of the remote playlist before writing and be able to restore it manually. | Must |
 
-## 8. Бизнес-правила
+## 8. Business rules
 
-- BR-001: все управляемые плейлисты приватные по умолчанию.
-- BR-002: чужие и вручную созданные плейлисты только читаются; Tuner не меняет их.
-- BR-003: явный dislike всегда исключает трек до ручной отмены.
-- BR-004: pause, buffering, player error и уход вкладки в background не считаются отрицательной реакцией.
-- BR-005: «ранний пропуск» возникает только после явного next/выбора другого трека. При известной длительности граница — менее 20%; при неизвестной после запроса duration у IFrame применяется менее уверенный absolute-time fallback до 30 секунд.
-- BR-006: сессия квалифицируется для обучения, если проиграно минимум 10 фактических секунд либо произошло явное like, dislike или Next. Поэтому осознанный ранний Next не теряется даже на первых секундах трека; pause, close и error по-прежнему не квалифицируют сессию сами по себе.
-- BR-007: локальная очередь может пересобираться часто без внешних вызовов; удалённые плейлисты — не чаще одного publish-окна в 24 часа.
-- BR-008: один последующий publish меняет не более 15 логических элементов и выполняет не более 15 mutating HTTP-вызовов в каждом плейлисте за окно; первичное наполнение выполняется одним подтверждённым `create_playlist(..., video_ids=...)` и сразу проверяется.
-- BR-009: после bootstrap-порога модель обучается в shadow-режиме, но первые 100 квалифицированных сессий обслуживаются неизменным rule-based ranker; влияние модели на выдачу начинается только после закрытия чистого baseline и прохождения safety gates.
-- BR-010: target size управляемого плейлиста по умолчанию равен 60, но publish planner может детерминированно уменьшить его до наибольшего достижимого размера не ниже 25, если иначе невозможно выполнить temperature quota и остальные quality gates. При невозможности набрать даже 25 треков внешняя запись не выполняется, а UI показывает точный дефицит по bucket.
-- BR-011: продолжение уже принятой публикации со статусом PARTIAL не требует ещё 15 новых сессий: это завершение неизменяемого plan. Каждый следующий фрагмент всё равно ждёт нового 24-часового окна и повторно проходит safety, ownership, hash, circuit и call-budget проверки.
-- BR-012: две соседние волны пересекаются не более чем на 30%, а discovery-часть не повторяется вовсе. Свежесть — ограничение, а не побочный эффект ранжирования: при конфликте с квотой знакомого выигрывает свежесть, а недобор квоты явно помечается reason code. Повтор лайка допустим — жалоба всегда касается повторной выдачи того, что было пропущено.
-- BR-013: удалённый плейлист никогда не публикуется без предварительного просмотра его состава. Просмотренный список фиксируется, и запись выполняется именно им; кнопка публикации недоступна до просмотра.
-- BR-014: любой managed playlist можно удалить по явному подтверждению, включая ACTIVE. Гарантия безопасности — совпадение ownership marker при свежем чтении, а не статус записи.
-- BR-015: каждый трек из библиотеки лайков должен быть использован как точка исследования графа прежде, чем обход уходит глубже. Пул, отражающий часть вкуса, воспринимается как однообразие даже при формально неповторяющихся треках.
+- BR-001: all managed playlists are private by default.
+- BR-002: other people's and manually created playlists are only read; Tuner does not change them.
+- BR-003: an explicit dislike always excludes the track until it is manually reverted.
+- BR-004: pause, buffering, player error and the tab going to the background do not count as a negative reaction.
+- BR-005: an "early skip" occurs only after an explicit next / choosing another track. When the duration is known, the boundary is less than 20%; when it is unknown, after the duration is requested from the IFrame, a less confident absolute-time fallback of up to 30 seconds is applied.
+- BR-006: a session qualifies for training if at least 10 actual seconds were played or there was an explicit like, dislike or Next. Therefore a deliberate early Next is not lost even in the first seconds of a track; pause, close and error still do not qualify a session by themselves.
+- BR-007: the local queue may be rebuilt often without external calls; remote playlists — no more than one publish window per 24 hours.
+- BR-008: one subsequent publish changes no more than 15 logical items and makes no more than 15 mutating HTTP calls in each playlist per window; the initial fill is performed by a single confirmed `create_playlist(..., video_ids=...)` and is verified immediately.
+- BR-009: after the bootstrap threshold the model trains in shadow mode, but the first 100 qualified sessions are served by an unchanged rule-based ranker; the model's influence on the tracks served begins only after the clean baseline is closed and the safety gates are passed.
+- BR-010: the default target size of a managed playlist is 60, but the publish planner may deterministically reduce it to the largest achievable size of no less than 25 if otherwise the temperature quota and the other quality gates cannot be satisfied. If even 25 tracks cannot be assembled, no external write is performed and the UI shows the exact shortfall per bucket.
+- BR-011: continuing an already accepted publication with status PARTIAL does not require another 15 new sessions: it is the completion of an immutable plan. Each subsequent fragment still waits for a new 24-hour window and passes the safety, ownership, hash, circuit and call-budget checks again.
+- BR-012: two adjacent waves overlap by no more than 30%, and the discovery part is not repeated at all. Freshness is a constraint, not a side effect of ranking: in a conflict with the familiar quota freshness wins, and a quota shortfall is explicitly marked with a reason code. A repeated like is acceptable — the complaint is always about the repeated serving of what was skipped.
+- BR-013: a remote playlist is never published without first previewing its contents. The previewed list is frozen, and the write is performed with exactly that list; the publish button is unavailable before the preview.
+- BR-014: any managed playlist can be deleted on explicit confirmation, including ACTIVE. The safety guarantee is the match of the ownership marker on a fresh read, not the record status.
+- BR-015: every track from the likes library must be used as a graph exploration point before the traversal goes deeper. A pool that reflects part of the taste is perceived as monotony even when the tracks formally do not repeat.
 
-## 9. Нефункциональные требования
+## 9. Non-functional requirements
 
-| ID | Требование |
+| ID | Requirement |
 | --- | --- |
-| NFR-001 | Один Docker Compose-сервис, persistent volume и health check. |
-| NFR-002 | Bind по умолчанию только `127.0.0.1:43127`; порт настраивается. |
-| NFR-003 | Ответ кешированного API p95 менее 250 мс на локальной машине. |
-| NFR-004 | Ни один OAuth-токен, client secret или cookie не попадает в логи. |
-| NFR-005 | События принимаются идемпотентно по `client_event_id`. |
-| NFR-006 | Перезапуск контейнера не теряет БД, OAuth и незавершённое publish-состояние. |
-| NFR-007 | Все изменения схемы выполняются Alembic-миграциями. |
-| NFR-008 | Внешние ошибки приводят к backoff, а не к tight retry loop. |
-| NFR-009 | UI остаётся пригодным при ширине 1024 px; мобильный web — best effort, не основная цель. |
-| NFR-010 | Алгоритм должен быть воспроизводим при фиксированном seed и snapshot данных. |
+| NFR-001 | One Docker Compose service, a persistent volume and a health check. |
+| NFR-002 | Bind by default only to `127.0.0.1:43127`; the port is configurable. |
+| NFR-003 | Cached API response p95 under 250 ms on a local machine. |
+| NFR-004 | No OAuth token, client secret or cookie ends up in the logs. |
+| NFR-005 | Events are accepted idempotently by `client_event_id`. |
+| NFR-006 | A container restart does not lose the DB, OAuth or the unfinished publish state. |
+| NFR-007 | All schema changes are made by Alembic migrations. |
+| NFR-008 | External errors lead to backoff, not to a tight retry loop. |
+| NFR-009 | The UI remains usable at a width of 1024 px; mobile web is best effort, not a primary goal. |
+| NFR-010 | The algorithm must be reproducible with a fixed seed and a data snapshot. |
 
-## 10. Метрики успеха
+## 10. Success metrics
 
-Baseline собирается на первых 100 квалифицированных сессиях, все из которых ранжируются одной зафиксированной версией rule-based score. С 40-й сессии LinUCB может обучаться и оцениваться только в shadow-режиме, но не влияет на выбор треков. После закрытия baseline и следующих 200 сессий с активной моделью MVP считается полезным, если:
+The baseline is collected on the first 100 qualified sessions, all of which are ranked by a single fixed version of the rule-based score. From the 40th session LinUCB may be trained and evaluated only in shadow mode, but does not influence track selection. After the baseline is closed and the next 200 sessions with the active model, the MVP is considered useful if:
 
-- доля явных пропусков до 20% длительности снизилась минимум на 20% относительно baseline;
-- доля треков, дослушанных минимум до 90%, выросла минимум на 15% относительно baseline;
-- в режиме Balance не менее 30% проигранных треков — не из лайков, но не более 40% из них получают ранний пропуск;
-- пересечение соседних волн не превышает 30%, а повтор discovery-треков отсутствует;
-- в волне из 40 треков не менее 30 разных артистов, и ни один артист не присутствует во всех последних волнах;
-- каждый играбельный лайк использован как точка исследования графа;
-- пользователь вручную чистит управляемые плейлисты не чаще одного раза в неделю;
-- автоматизация совершает не более заданного дневного бюджета внешних операций;
-- нет изменений плейлистов, не зарегистрированных как `managed_by_tuner`.
+- the share of explicit skips before 20% of the duration decreased by at least 20% relative to the baseline;
+- the share of tracks listened to at least 90% of their length increased by at least 15% relative to the baseline;
+- in Balance mode at least 30% of played tracks are not from likes, but no more than 40% of them receive an early skip;
+- the overlap of adjacent waves does not exceed 30%, and there is no repetition of discovery tracks;
+- a wave of 40 tracks contains at least 30 different artists, and no artist is present in all of the latest waves;
+- every playable like is used as a graph exploration point;
+- the user manually cleans the managed playlists no more than once a week;
+- the automation performs no more than the set daily budget of external operations;
+- there are no changes to playlists not registered as `managed_by_tuner`.
 
-При малом количестве данных метрики показываются с числом наблюдений, без ложной уверенности.
+With a small amount of data the metrics are shown together with the number of observations, without false confidence.
 
-Основные early-skip/completion метрики включают только сессии с `classification_basis=RATIO`. Сессии с неизвестной duration и absolute-time fallback показываются отдельным рядом и участвуют в обучении с меньшим весом, но не искажают baseline долей «до 20%» и «не менее 90%».
+The main early-skip/completion metrics include only sessions with `classification_basis=RATIO`. Sessions with an unknown duration and the absolute-time fallback are shown as a separate series and participate in training with lower weight, but do not distort the baseline of the "before 20%" and "at least 90%" shares.
 
-## 11. Критерий готовности MVP
+## 11. MVP definition of done
 
-MVP готов, когда выполнены все Must-требования, пройдены сценарии AT-01…AT-12 из документа тестирования, контейнер восстанавливается после перезапуска без потери данных, а один реальный end-to-end smoke test подтверждает чтение лайков, воспроизведение, запись телеметрии и безопасное обновление тестового приватного плейлиста.
+The MVP is ready when all Must requirements are met, scenarios AT-01…AT-12 from the testing document pass, the container recovers after a restart without data loss, and one real end-to-end smoke test confirms reading likes, playback, writing telemetry and safe updating of a test private playlist.

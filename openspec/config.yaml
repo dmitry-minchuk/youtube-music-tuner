@@ -13,7 +13,7 @@ context: |
   cookie headers, because OAuth with a self-made client is rejected (ADR-001).
 
   The design documents in docs/ are the source of truth and are written in
-  Russian; numbered 01..13 plus decisions/ADR-00x. Code, comments, commit
+  English; numbered 01..13 plus decisions/ADR-00x. Code, comments, commit
   messages and identifiers are English. Any behaviour change updates the
   matching requirement and acceptance criterion first (docs/README.md).
 

@@ -1,60 +1,60 @@
-# Комплект проектной документации
+# Project documentation set
 
-Документы описывают целевое состояние YouTube Music Tuner. Формулировка «должен» означает требование к реализации; фактический статус разработки отражается только в корневом `README.md` и roadmap.
+The documents describe the target state of YouTube Music Tuner. The wording "must" denotes a requirement for the implementation; the actual development status is reflected only in the root `README.md` and the roadmap.
 
-Начиная с revision 1.3 значительная часть документов описывает уже работающую систему, а не план: числа, приведённые в тексте, измерены на живой библиотеке и датированы.
+Starting with revision 1.3, a significant part of the documents describes an already working system rather than a plan: the numbers given in the text were measured on a live library and are dated.
 
 ## Revision 1.3 — 2026-08-03
 
-Первые недели реального использования вскрыли, что подбор был слабее описанного, и слабости оказались структурными, а не настроечными.
+The first weeks of real use revealed that the selection was weaker than described, and the weaknesses turned out to be structural rather than a matter of tuning.
 
-**Рекомендатель.** Агрегаты вкуса никто не заполнял, поэтому история прослушиваний не влияла на выдачу вообще. Пул кандидатов выбрасывался по TTL и не накапливался, кратность связей схлопывалась, а обход графа углублял один кластер, оставляя большую часть библиотеки непредставленной. Всё это переработано: граф стал постоянным и многохоповым, ширина идёт прежде глубины, свежесть волны стала явным ограничением с memory на уровне треков и артистов. Решение зафиксировано в ADR-004.
+**Recommender.** Nobody populated the taste aggregates, so the listening history did not affect what was served at all. The candidate pool was discarded by TTL and did not accumulate, the multiplicity of edges collapsed, and the graph traversal deepened one cluster, leaving most of the library unrepresented. All of this has been reworked: the graph became persistent and multi-hop, breadth comes before depth, and wave freshness became an explicit constraint with memory at the track and artist level. The decision is recorded in ADR-004.
 
-**Публикация.** Preview показывал только счётчики, то есть публикация выполнялась вслепую; список плейлиста нельзя было ни увидеть, ни услышать, ни перегенерировать, ни удалить готовый плейлист. Теперь просмотр обязателен и содержателен, а граница безопасности сместилась с «статуса записи» на «совпадение ownership marker».
+**Publishing.** The preview showed only counters, that is, publishing was done blind; the playlist contents could be neither seen, nor heard, nor regenerated, and a ready playlist could not be deleted. Now viewing the list is mandatory and substantive, and the safety boundary has shifted from "record status" to "ownership marker match".
 
-**Инфраструктура.** Устранены три отказа, обнаруженные в работе: tight loop планировщика, потеря телеметрии из-за единственной write-блокировки SQLite и невозможность верифицировать только что созданный плейлист.
+**Infrastructure.** Three failures discovered in operation have been eliminated: the scheduler's tight loop, telemetry loss caused by the single write lock of SQLite, and the inability to verify a freshly created playlist.
 
-**Отменённое решение.** Пауза при скрытой вкладке по умолчанию **выключена** по прямому решению владельца установки (2026-08-01), обратно решениям revision 1.1. Остаточный риск принят и записан в docs/10.
+**Reversed decision.** The pause on a hidden tab is **off** by default by direct decision of the installation owner (2026-08-01), reversing the decisions of revision 1.1. The residual risk is accepted and recorded in docs/10.
 
 ## Revision 1.2.1 — 2026-08-01
 
-Cleanup неверифицированного setup artifact доведён до интеграционного контракта: добавлены `delete_managed_playlist`/`delete_playlist`, точный scope, отдельный двухзапросный budget, переход в DELETED и contract fixtures. Rule-score mapping явно обозначен как некалиброванное монотонное преобразование; первый real preview обязан измерить pass rate порога 0.40.
+Cleanup of an unverified setup artifact has been brought to the level of an integration contract: added `delete_managed_playlist`/`delete_playlist`, an exact scope, a separate two-request budget, a transition to DELETED and contract fixtures. The rule-score mapping is explicitly designated as an uncalibrated monotonic transformation; the first real preview must measure the pass rate of the 0.40 threshold.
 
 ## Revision 1.2 — 2026-08-01
 
-Повторный review закрыл раннюю публикацию без ACTIVE-модели через общий `quality_expected`, адаптивный размер 25–60 и точные pool diagnostics, crash-safe CREATING/UNVERIFIED lifecycle, продолжение PARTIAL без повторного listening threshold, независимые item/request budgets и однозначный BASELINE/SHADOW/ACTIVE API. Также уточнены квалификация короткого explicit Next, reward precedence, proportional artist diversity и retention feature snapshots.
+A repeated review closed early publication without an ACTIVE model through the shared `quality_expected`, an adaptive size of 25–60 and exact pool diagnostics, a crash-safe CREATING/UNVERIFIED lifecycle, continuation of PARTIAL without a repeated listening threshold, independent item/request budgets and an unambiguous BASELINE/SHADOW/ACTIVE API. Also clarified: qualification of a short explicit Next, reward precedence, proportional artist diversity and retention of feature snapshots.
 
 ## Revision 1.1 — 2026-08-01
 
-После сквозного архитектурного review уточнены clean baseline/SHADOW activation, reward normalization, `progress_tick`, unknown-duration/seek classification, revision-aware rating jobs, initial playlist fill, versioned playlist quality gates, convergent PARTIAL ordering, single-owner diversity rules, named-volume UID/GID, CSRF и DNS-rebinding protection. Policy-пауза при hidden была сохранена на основании актуальных YouTube Developer Policies — решение отменено в revision 1.3.
+After an end-to-end architectural review the following were clarified: clean baseline/SHADOW activation, reward normalisation, `progress_tick`, unknown-duration/seek classification, revision-aware rating jobs, initial playlist fill, versioned playlist quality gates, convergent PARTIAL ordering, single-owner diversity rules, named-volume UID/GID, CSRF and DNS-rebinding protection. The policy pause on hidden was kept on the basis of the current YouTube Developer Policies — the decision was reversed in revision 1.3.
 
-## Порядок чтения
+## Reading order
 
-1. [Продуктовые требования](01-product-requirements.md) — зачем существует продукт и что входит в MVP.
-2. [Системная архитектура](02-system-architecture.md) — компоненты, границы и поток данных.
-3. [Интеграция с YouTube Music](03-youtube-integration.md) — `ytmusicapi`, OAuth, синхронизация и лимиты.
-4. [Плеер и телеметрия](04-player-and-telemetry.md) — как измеряется реальное слушание.
-5. [Рекомендательный движок](05-recommendation-engine.md) — candidate generation, обучение и температура.
-6. [UI/UX](06-ui-ux.md) — информационная архитектура и визуальные принципы.
-7. [Модель данных](07-data-model.md) — таблицы, идентификаторы и хранение.
-8. [Внутренний API](08-api-contract.md) — контракт frontend/backend.
-9. [Docker и эксплуатация](09-operations-docker.md) — запуск, health check, backup и восстановление.
-10. [Безопасность, приватность и риски](10-security-privacy-risks.md).
-11. [Тестирование и приёмка](11-testing-acceptance.md).
+1. [Product requirements](01-product-requirements.md) — why the product exists and what is included in the MVP.
+2. [System architecture](02-system-architecture.md) — components, boundaries and data flow.
+3. [YouTube Music integration](03-youtube-integration.md) — `ytmusicapi`, OAuth, synchronisation and limits.
+4. [Player and telemetry](04-player-and-telemetry.md) — how actual listening is measured.
+5. [Recommendation engine](05-recommendation-engine.md) — candidate generation, training and temperature.
+6. [UI/UX](06-ui-ux.md) — information architecture and visual principles.
+7. [Data model](07-data-model.md) — tables, identifiers and storage.
+8. [Internal API](08-api-contract.md) — the frontend/backend contract.
+9. [Docker and operations](09-operations-docker.md) — launch, health check, backup and restore.
+10. [Security, privacy and risks](10-security-privacy-risks.md).
+11. [Testing and acceptance](11-testing-acceptance.md).
 12. [Roadmap](12-roadmap.md).
-13. [Источники](13-references.md) — изученная документация и дата проверки.
+13. [Sources](13-references.md) — the documentation studied and the date it was checked.
 
 ## Architecture Decision Records
 
-- [ADR-001: использовать ytmusicapi](decisions/ADR-001-use-ytmusicapi.md);
-- [ADR-002: локальный рекомендатель без обязательной LLM](decisions/ADR-002-local-recommender-no-llm.md);
-- [ADR-003: один контейнер и порт 43127](decisions/ADR-003-single-container-port.md);
-- [ADR-004: граф кандидатов вместо кешированного пула](decisions/ADR-004-candidate-graph-over-cached-pool.md).
+- [ADR-001: use ytmusicapi](decisions/ADR-001-use-ytmusicapi.md);
+- [ADR-002: local recommender without a mandatory LLM](decisions/ADR-002-local-recommender-no-llm.md);
+- [ADR-003: one container and port 43127](decisions/ADR-003-single-container-port.md);
+- [ADR-004: candidate graph instead of a cached pool](decisions/ADR-004-candidate-graph-over-cached-pool.md).
 
-## Правила актуализации
+## Maintenance rules
 
-- Предложения по изменениям ведутся через OpenSpec: `openspec/changes/` содержит активные предложения, `openspec/specs/` — живые спецификации, накопленные из завершённых изменений. Контекст проекта для ассистента задан в `openspec/config.yaml`. Эти документы остаются источником истины по требованиям; OpenSpec фиксирует путь от предложения к реализации.
-- При изменении продуктового поведения сначала обновляется соответствующее требование и критерий приёмки.
-- При смене фундаментального технического решения добавляется новый ADR, который заменяет старый; старый ADR не удаляется.
-- Версия `ytmusicapi`, OAuth-процесс и поддерживаемые методы перепроверяются перед каждым обновлением зависимости.
-- Документ не должен содержать OAuth-токены, Google client secret, cookies или реальные идентификаторы приватных плейлистов.
+- Change proposals are managed through OpenSpec: `openspec/changes/` contains the active proposals, `openspec/specs/` the living specifications accumulated from completed changes. The project context for the assistant is set in `openspec/config.yaml`. These documents remain the source of truth for requirements; OpenSpec records the path from proposal to implementation.
+- When product behaviour changes, the corresponding requirement and acceptance criterion are updated first.
+- When a fundamental technical decision changes, a new ADR is added that replaces the old one; the old ADR is not deleted.
+- The `ytmusicapi` version, the OAuth process and the supported methods are rechecked before every dependency update.
+- A document must not contain OAuth tokens, a Google client secret, cookies or real identifiers of private playlists.

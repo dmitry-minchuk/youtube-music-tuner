@@ -1,4 +1,4 @@
-"""Local mass-generated-content heuristics (docs/05 section 4, "Слоп-фильтр").
+"""Local mass-generated-content heuristics (docs/05 section 4, "Slop filter").
 
 YouTube radio drags farm-produced AI tracks into the graph: hashtag-stuffed
 titles, "type beat" uploads, background-music formulas, artist names that

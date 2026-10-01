@@ -1,70 +1,70 @@
-# ADR-004: граф кандидатов вместо кешированного пула
+# ADR-004: candidate graph instead of a cached pool
 
-- Статус: Accepted
-- Дата: 2026-08-01
-- Область: recommendation/candidate generation
+- Status: Accepted
+- Date: 2026-08-01
+- Scope: recommendation/candidate generation
 
-## Контекст
+## Context
 
-После двух недель реального использования Restart Wave начал выдавать те же треки, которые пользователь только что пропустил. Замеры на живой базе:
+After two weeks of real use, Restart Wave began to serve the same tracks the user had just skipped. Measurements on the live database:
 
-| Показатель | Значение |
+| Metric | Value |
 | --- | --- |
-| Пересечение двух соседних волн | 38 из 40 треков (95%) |
-| Уникальных кандидатов в пуле | 185, из них играбельных 119 |
-| Разных треков уже прослушано | 141 — больше, чем весь играбельный пул |
-| Строк в `track_affinity` / `artist_affinity` | 0 / 0 |
-| Ранних пропусков, повлиявших на выдачу | 0 из 91 |
-| Seed за прогон | 4, все из 17 играбельных лайков |
+| Overlap of two adjacent waves | 38 of 40 tracks (95%) |
+| Unique candidates in the pool | 185, of which 119 playable |
+| Distinct tracks already listened to | 141 — more than the entire playable pool |
+| Rows in `track_affinity` / `artist_affinity` | 0 / 0 |
+| Early skips that affected the output | 0 of 91 |
+| Seeds per run | 4, all from 17 playable likes |
 
-Причины оказались структурными, а не настроечными.
+The causes turned out to be structural, not a matter of tuning.
 
-**Пул не рос.** Рёбра `seed → candidate` жили 7 дней и удалялись, а `_has_fresh_edges` запрещал переспрашивать seed со свежими рёбрами. Одни и те же 4 seed давали один и тот же ответ; накопления знания не происходило по построению.
+**The pool did not grow.** `seed → candidate` edges lived 7 days and were then deleted, and `_has_fresh_edges` prohibited re-querying a seed that had fresh edges. The same 4 seeds gave the same answer; by construction, no knowledge accumulated.
 
-**Кратность связей выбрасывалась.** Все рёбра к кандидату схлопывались в одно «лучшее по рангу», а в feature vector уходила константа `distinct_seed_count=1`.
+**Link multiplicity was discarded.** All edges to a candidate were collapsed into one "best by rank" edge, and the constant `distinct_seed_count=1` went into the feature vector.
 
-**Контур обратной связи был разомкнут.** Таблицы агрегатов никто не заполнял, поэтому `fatigue`, `recent_skip`, `novelty`, `rediscovery` тождественно равнялись нулю. Из пяти весов `rule-score-v1` работал ровно один.
+**The feedback loop was open.** Nobody populated the aggregate tables, so `fatigue`, `recent_skip`, `novelty`, `rediscovery` were identically zero. Of the five weights of `rule-score-v1`, exactly one worked.
 
-## Что говорит теория
+## What the theory says
 
-Индустриальный стандарт — трёхступенчатая воронка candidate generation → ranking → re-ranking, где каждая ступень работает только с тем, что передала предыдущая. Хороший ранкер поверх бедного пула даёт бедный результат.
+The industry standard is a three-stage funnel candidate generation → ranking → re-ranking, where each stage works only with what the previous one passed on. A good ranker on top of a poor pool gives a poor result.
 
-«Моя волна» Яндекса совмещает три класса алгоритмов: коллаборативный, контентный («аудиослепок») и статистики, сводя их CatBoost, и подстраивается на каждом треке, а не раз в сутки. Пул — 80 млн треков.
+Yandex's "My Wave" combines three classes of algorithms: collaborative, content-based ("audio fingerprint") and statistics, blending them with CatBoost, and it adapts on every track, not once a day. The pool is 80 million tracks.
 
-Для установки на одного человека классическая коллаборативная фильтрация невозможна: нет «пользователей, похожих на вас». Но `related`/`radio` от YouTube **и есть** результат коллаборативной фильтрации, посчитанный по миллионам слушателей. Это доступный нам коллаборативный слой, и мы использовали его в один хоп от четырёх seed.
+For a one-person setup, classic collaborative filtering is impossible: there are no "users similar to you". But YouTube's `related`/`radio` **are** the result of collaborative filtering computed over millions of listeners. This is the collaborative layer available to us, and we used it one hop away from the four seeds.
 
-Контентного слоя (аудио) у нас нет и не будет — API не отдаёт признаки звука. Его законная замена — ко-встречаемость в том же графе: item-embedding методы (Item2Vec, Item-Graph2vec) учат похожесть именно из совместной встречаемости, а не из сигнала. Обход графа похожести случайным блужданием — стандартный способ генерации кандидатов.
+We do not have a content layer (audio) and will not — the API does not provide audio features. Its legitimate substitute is co-occurrence in the same graph: item-embedding methods (Item2Vec, Item-Graph2vec) learn similarity precisely from joint occurrence, not from a signal. Traversing a similarity graph with a random walk is a standard way to generate candidates.
 
-Для разнообразия MMR миопичен; оконные DPP-реранкеры дают лучшее разнообразие без потери точности (YouTube использует окна 6–12).
+For diversity, MMR is myopic; windowed DPP rerankers give better diversity without losing accuracy (YouTube uses windows of 6–12).
 
-## Решение
+## Decision
 
-1. **Граф вместо кеша.** Рёбра накапливаются бессрочно; `expires_at` означает лишь «seed можно опросить заново». Каждое ребро несёт `hop` — расстояние от positive root, вклад дисконтируется как `0.72^(hop-1)`, глубина до 3.
-2. **Frontier expansion.** Каждые 6 часов до 8 наиболее поддержанных нераскрытых узлов опрашиваются через radio (1 вызов, до 25 кандидатов). Приоритет — по числу входящих рёбер от любимых треков; узлы с отрицательной наградой не раскрываются.
-3. **Ко-встречаемость как признак.** `distinct_seed_count` считается реально: сколько разных positive roots указывают на кандидата. Это прямой аналог co-occurrence count из item-embedding методов.
-4. **Замкнутый контур.** Агрегаты обновляются сразу после переагрегации сессии, полным пересчётом по треку (идемпотентно к повторной доставке батча).
-5. **Свежесть как ограничение, а не побочный эффект ранжирования.** Адаптивное окно новизны, память о четырёх последних волнах, стохастический отбор из 12 лидеров вместо argmax, ограничение на долю выедаемого пула.
+1. **Graph instead of cache.** Edges accumulate indefinitely; `expires_at` only means "the seed may be queried again". Each edge carries `hop` — the distance from a positive root, the contribution is discounted as `0.72^(hop-1)`, depth up to 3.
+2. **Frontier expansion.** Every 6 hours, up to 8 of the most-supported unexpanded nodes are queried via radio (1 call, up to 25 candidates). Priority is by the number of incoming edges from favourite tracks; nodes with a negative reward are not expanded.
+3. **Co-occurrence as a feature.** `distinct_seed_count` is computed for real: how many different positive roots point to the candidate. This is a direct analog of the co-occurrence count in item-embedding methods.
+4. **Closed loop.** Aggregates are updated immediately after the session is re-aggregated, by full recomputation per track (idempotent under repeated delivery of a batch).
+5. **Freshness as a constraint, not a side effect of ranking.** An adaptive novelty window, memory of the four most recent waves, stochastic selection from the 12 leaders instead of argmax, a cap on the share of the pool that gets used up.
 
-## Последствия
+## Consequences
 
-Замеры после внедрения на той же базе:
+Measurements after the rollout on the same database:
 
-| Показатель | Было | Стало |
+| Metric | Before | After |
 | --- | --- | --- |
-| Пересечение соседних волн | 95% | 0–25% |
-| Повтор discovery-треков | почти полный | 0% |
-| Уникальных кандидатов | 185 | 404 после одного прогона расширения |
-| Играбельных кандидатов | 119 | 340 |
-| Строк агрегатов | 0 | 141 треков, 124 артиста |
-| Кандидатов, поддержанных 2+ любимыми seed | не считалось | 34 |
+| Overlap of adjacent waves | 95% | 0–25% |
+| Repeat of discovery tracks | almost complete | 0% |
+| Unique candidates | 185 | 404 after one expansion run |
+| Playable candidates | 119 | 340 |
+| Aggregate rows | 0 | 141 tracks, 124 artists |
+| Candidates supported by 2+ favourite seeds | not counted | 34 |
 
-Цена — рост дневного бюджета discovery-вызовов до 60 (было фактически ~15) и рост БД: граф растёт примерно на 800 рёбер в сутки, retention чистит рёбра старше года.
+The cost is an increase in the daily budget of discovery calls to 60 (it was effectively ~15) and growth of the DB: the graph grows by about 800 edges per day, and retention purges edges older than a year.
 
-Обнаружился конфликт двух требований: familiar-квота при temperature 50 просит 22 знакомых трека из 40, а играбельных фаворитов всего 18 — их пришлось бы повторять целиком. Приоритет отдан свежести: волна берёт не более 75% (холодная) — 50% (горячая) доступных знакомых, недобор квоты отмечается кодом `FAMILIAR_ROTATION_CAP`. Настоящее решение — больше играбельных лайков, но 35 из 52 заблокированы для встраивания на стороне YouTube.
+A conflict between two requirements emerged: the familiar quota at temperature 50 asks for 22 familiar tracks out of 40, but there are only 18 playable favourites in total — they would have to be repeated in full. Priority was given to freshness: a wave takes no more than 75% (cold) to 50% (hot) of the available familiar tracks, and a quota shortfall is flagged with the code `FAMILIAR_ROTATION_CAP`. The real solution is more playable likes, but 35 of 52 are blocked from embedding on YouTube's side.
 
-## Условия пересмотра
+## Revisit conditions
 
-- граф перерастает ~200k рёбер и полная загрузка на каждую волну перестаёт укладываться в бюджет времени — тогда переходить на SQL-агрегацию или инкрементальный индекс поддержки;
-- пул становится настолько большим, что ограничение ротации перестаёт быть нужным;
-- появляется законный источник аудиопризнаков — тогда ко-встречаемость дополняется контентным слоем, как у Яндекса;
-- LinUCB переходит в ACTIVE и начинает сам управлять exploration — часть эвристик свежести может уступить место uncertainty bonus.
+- the graph grows beyond ~200k edges and loading it in full for every wave no longer fits the time budget — then switch to SQL aggregation or an incremental support index;
+- the pool becomes so large that the rotation cap is no longer needed;
+- a lawful source of audio features appears — then co-occurrence is complemented with a content layer, as at Yandex;
+- LinUCB moves to ACTIVE and starts managing exploration itself — some of the freshness heuristics may give way to the uncertainty bonus.

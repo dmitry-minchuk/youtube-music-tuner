@@ -1,49 +1,49 @@
-# Внутренний HTTP API
+# Internal HTTP API
 
-## 1. Общие правила
+## 1. General rules
 
 - Base path: `/api/v1`.
-- JSON в `camelCase` наружу, typed Python models внутри.
-- Все timestamps — UTC RFC 3339.
-- Mutation принимает `Idempotency-Key`, когда операция может быть повторена браузером.
-- Ошибка имеет форму `{"error":{"code":"...","message":"...","requestId":"...","retryable":false}}`.
-- UI того же origin; CORS выключен по умолчанию.
-- Backend отклоняет неизвестный `Host` до routing. Allowlist: hostname из `127.0.0.1`, `localhost`, `[::1]` и port, равный `TUNER_PUBLIC_PORT`; это защита от DNS rebinding, а не функция будущего LAN-режима.
-- `GET /api/v1/session` устанавливает случайную HttpOnly `SameSite=Strict` session cookie и возвращает связанный CSRF token. Каждая mutation передаёт token в `X-CSRF-Token`; backend проверяет cookie/token pair и exact `Origin`. Session живёт только локально и инвалидируется после restart.
+- JSON in `camelCase` externally, typed Python models internally.
+- All timestamps are UTC RFC 3339.
+- A mutation accepts `Idempotency-Key` when the operation may be repeated by the browser.
+- An error has the form `{"error":{"code":"...","message":"...","requestId":"...","retryable":false}}`.
+- The UI is same-origin; CORS is disabled by default.
+- The backend rejects an unknown `Host` before routing. Allowlist: a hostname from `127.0.0.1`, `localhost`, `[::1]` and a port equal to `TUNER_PUBLIC_PORT`; this is a defence against DNS rebinding, not a feature of a future LAN mode.
+- `GET /api/v1/session` sets a random HttpOnly `SameSite=Strict` session cookie and returns the associated CSRF token. Each mutation passes the token in `X-CSRF-Token`; the backend checks the cookie/token pair and the exact `Origin`. The session lives only locally and is invalidated after a restart.
 
 ## 2. System/Auth
 
-| Method | Path | Назначение |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/health/live` | liveness без обращения к внешним сервисам |
-| GET | `/health/ready` | БД и migrations ready |
+| GET | `/health/live` | liveness without calls to external services |
+| GET | `/health/ready` | DB and migrations ready |
 | GET | `/api/v1/session` | local session cookie + CSRF token |
-| GET | `/api/v1/system/status` | версии, jobs, circuit, last sync/train/publish |
-| GET | `/api/v1/auth/status` | connected account summary без secrets |
-| POST | `/api/v1/auth/disconnect` | отменить jobs и удалить local OAuth после подтверждения |
+| GET | `/api/v1/system/status` | versions, jobs, circuit, last sync/train/publish |
+| GET | `/api/v1/auth/status` | connected account summary without secrets |
+| POST | `/api/v1/auth/disconnect` | cancel jobs and delete local OAuth after confirmation |
 
-OAuth bootstrap в MVP выполняется CLI, а UI показывает пошаговую инструкцию и автоматически подхватывает появившийся token file.
+OAuth bootstrap in the MVP is performed by the CLI, and the UI shows step-by-step instructions and automatically picks up the token file once it appears.
 
-## 3. Library и playlists
+## 3. Library and playlists
 
-| Method | Path | Назначение |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/library/tracks?view=liked&cursor=...` | локальный каталог |
-| GET | `/api/v1/playlists` | remote + managed summaries; managed несут `contentUpdatedAt` — дата последнего издания контента (создание считается первым) |
-| GET | `/api/v1/playlists/{id}` | кешированный snapshot |
-| POST | `/api/v1/sync` | поставить sync job с cooldown |
-| GET | `/api/v1/search?q=...` | кешированный/явный remote search |
+| GET | `/api/v1/library/tracks?view=liked&cursor=...` | local catalogue |
+| GET | `/api/v1/playlists` | remote + managed summaries; managed ones carry `contentUpdatedAt` — the date of the latest content release (creation counts as the first) |
+| GET | `/api/v1/playlists/{id}` | cached snapshot |
+| POST | `/api/v1/sync` | enqueue a sync job with a cooldown |
+| GET | `/api/v1/search?q=...` | cached/explicit remote search |
 | PUT | `/api/v1/tracks/{videoId}/rating` | desired LIKE/DISLIKE/INDIFFERENT |
-| POST | `/api/v1/tracks/{videoId}/veto` | локальный сильный негатив (docs/05 §11) |
-| DELETE | `/api/v1/tracks/{videoId}/veto` | снять veto |
+| POST | `/api/v1/tracks/{videoId}/veto` | local strong negative (docs/05 §11) |
+| DELETE | `/api/v1/tracks/{videoId}/veto` | remove the veto |
 
 Pagination cursor opaque; default page 50, maximum 200.
 
-Rating response возвращает `desiredState`, `revision`, `syncStatus` и `vetoed` (в обоих ответах — GET и PUT). Повторные PUT для одного `videoId` обновляют одну logical command; job dedupe key не включает state. Veto-эндпоинты не создают sync job: сигнал строго локальный. Telemetry-событие `veto_set` входит в allowlist и агрегируется как explicit DISLIKE.
+The rating response returns `desiredState`, `revision`, `syncStatus` and `vetoed` (in both responses — GET and PUT). Repeated PUTs for the same `videoId` update one logical command; the job dedupe key does not include the state. Veto endpoints do not create a sync job: the signal is strictly local. The `veto_set` telemetry event is in the allowlist and is aggregated as an explicit DISLIKE.
 
-## 4. Wave и queue
+## 4. Wave and queue
 
-`POST /api/v1/waves` создаёт snapshot очереди.
+`POST /api/v1/waves` creates a queue snapshot.
 
 Request:
 
@@ -83,13 +83,13 @@ Response:
 }
 ```
 
-`freshness` отражает целевой показатель из docs/01 BR-012: сколько играбельных кандидатов было доступно и какую долю этой волны содержала предыдущая. Оба значения сохраняются на генерации, поэтому динамику видно в Insights.
+`freshness` reflects the target metric from docs/01 BR-012: how many playable candidates were available and what share of this wave the previous one contained. Both values are stored on the generation, so the trend is visible in Insights.
 
-`relaxations` перечисляет объявленные отклонения от целевого состава; возможные коды: `FAMILIAR_POOL_WIDENED`, `DISCOVERY_POOL_WIDENED`, `FAMILIAR_ROTATION_CAP`, `CONTEXT_WIDENED`, `DISCOVERY_REPEAT_ALLOWED`, `FAMILIAR_REPEAT_ALLOWED`, `SOURCE_CONCENTRATION_RELAXED`, `ARTIST_WINDOW_15_RELAXED`, `ARTIST_WINDOW_5_RELAXED`, `LOW_SEED_DIVERSITY` (последний — на уровне item reason codes). Отклонение без кода — дефект.
+`relaxations` lists the declared deviations from the target composition; possible codes: `FAMILIAR_POOL_WIDENED`, `DISCOVERY_POOL_WIDENED`, `FAMILIAR_ROTATION_CAP`, `CONTEXT_WIDENED`, `DISCOVERY_REPEAT_ALLOWED`, `FAMILIAR_REPEAT_ALLOWED`, `SOURCE_CONCENTRATION_RELAXED`, `ARTIST_WINDOW_15_RELAXED`, `ARTIST_WINDOW_5_RELAXED`, `LOW_SEED_DIVERSITY` (the last one is at the level of item reason codes). A deviation without a code is a defect.
 
-Воспроизводимость по `randomSeed` означает «то же состояние базы плюс тот же seed». Последние генерации сами являются входом следующей, поэтому два вызова подряд намеренно дают разные очереди — это требование, а не недетерминированность.
+Reproducibility by `randomSeed` means "the same database state plus the same seed". The latest generations are themselves an input to the next one, so two consecutive calls intentionally produce different queues — this is a requirement, not nondeterminism.
 
-После bootstrap и до activation SHADOW-ответ явно показывает обучаемую, но не serving-модель:
+After bootstrap and before activation, the SHADOW response explicitly shows the model that is being trained but is not the serving model:
 
 ```json
 {
@@ -103,7 +103,7 @@ Response:
 }
 ```
 
-В фазах BASELINE и SHADOW владельцем выдачи всегда остаётся `rule-score-v1`: `servingModelId=null`, а обучаемая модель указывается только как nullable `shadowModelId` и не влияет на items. После activation тот же фрагмент имеет вид:
+In the BASELINE and SHADOW phases, `rule-score-v1` always remains the owner of the output: `servingModelId=null`, and the model being trained is indicated only as a nullable `shadowModelId` and does not affect the items. After activation the same fragment looks like this:
 
 ```json
 {
@@ -117,16 +117,16 @@ Response:
 }
 ```
 
-Другие endpoints:
+Other endpoints:
 
-- `POST /api/v1/waves/{queueId}/extend` — ещё 20 локально ранжированных элементов;
-- `PATCH /api/v1/waves/{queueId}` — новая температура/mood для непроигранного хвоста;
-- `GET /api/v1/waves/{queueId}` — восстановление после reload;
-- `POST /api/v1/waves/{queueId}/exclude` — исключить candidate из текущей queue без global dislike.
+- `POST /api/v1/waves/{queueId}/extend` — another 20 locally ranked items;
+- `PATCH /api/v1/waves/{queueId}` — new temperature/mood for the unplayed tail;
+- `GET /api/v1/waves/{queueId}` — restore after a reload;
+- `POST /api/v1/waves/{queueId}/exclude` — exclude a candidate from the current queue without a global dislike.
 
 ## 5. Telemetry
 
-`POST /api/v1/telemetry/events:batch` принимает максимум 100 событий или 128 KiB.
+`POST /api/v1/telemetry/events:batch` accepts at most 100 events or 128 KiB.
 
 ```json
 {
@@ -166,7 +166,7 @@ Response:
 }
 ```
 
-Один невалидный event не отклоняет весь batch; rejected содержит event ID и код. Неизвестный `type` для поддерживаемой schema version отклоняется.
+One invalid event does not reject the whole batch; rejected contains the event ID and a code. An unknown `type` for a supported schema version is rejected.
 
 ## 6. Insights
 
@@ -176,30 +176,30 @@ Response:
 - `GET /api/v1/tracks/{videoId}/explanation?generationId=...`;
 - `GET /api/v1/diagnostics/api-budget`.
 
-`insights/pool` отдаёт состояние графа кандидатов и свежесть волн: `graphEdges`, `graphCandidates`, `playableCandidates`, `candidatesByHop`, `recentOverlapPercent` (последние 10 генераций), `lastOverlapPercent`, `lastPoolSize`.
+`insights/pool` returns the state of the candidate graph and the freshness of waves: `graphEdges`, `graphCandidates`, `playableCandidates`, `candidatesByHop`, `recentOverlapPercent` (last 10 generations), `lastOverlapPercent`, `lastPoolSize`.
 
-Explanation возвращает reason codes и числовые вкладчики, а не сгенерированную LLM историю.
+Explanation returns reason codes and numeric contributions, not a story generated by an LLM.
 
 ## 7. Managed publishing
 
-| Method | Path | Назначение |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/v1/managed-playlists/setup` | создать либо reconcile три Tuner playlist после preview |
-| POST | `/api/v1/managed-playlists/{kind}/plan` | просмотр состава без внешних вызовов; `{"regenerate": true}` предлагает другой вариант |
-| POST | `/api/v1/managed-playlists/{kind}/publish` | поставить idempotent job |
-| POST | `/api/v1/managed-playlists/{kind}/reconcile` | проверить/adopt CREATING, UNVERIFIED или CLEANUP_REQUIRED exact marker; для DELETED — `400` |
-| DELETE | `/api/v1/managed-playlists/{kind}/setup-artifact` | после подтверждения удалить свой playlist в любом статусе, только exact remote ID с совпавшим marker |
-| GET | `/api/v1/publications/{id}` | state и verification |
-| GET | `/api/v1/managed-playlists/{kind}/backups` | доступные snapshots |
-| POST | `/api/v1/managed-playlists/{kind}/restore` | спланировать ручное восстановление |
+| POST | `/api/v1/managed-playlists/setup` | create or reconcile the three Tuner playlists after a preview |
+| POST | `/api/v1/managed-playlists/{kind}/plan` | view the composition without external calls; `{"regenerate": true}` proposes a different variant |
+| POST | `/api/v1/managed-playlists/{kind}/publish` | enqueue an idempotent job |
+| POST | `/api/v1/managed-playlists/{kind}/reconcile` | check/adopt a CREATING, UNVERIFIED or CLEANUP_REQUIRED exact marker; for DELETED — `400` |
+| DELETE | `/api/v1/managed-playlists/{kind}/setup-artifact` | after confirmation, delete your own playlist in any status, only an exact remote ID with a matching marker |
+| GET | `/api/v1/publications/{id}` | state and verification |
+| GET | `/api/v1/managed-playlists/{kind}/backups` | available snapshots |
+| POST | `/api/v1/managed-playlists/{kind}/restore` | plan a manual restore |
 
-Publish пишет сохранённый на manifest preview (запрос без тела); защита от remote-изменений выполняется на сервере сравнением remote hash с последним верифицированным промежуточным состоянием (docs/03 §8, шаг 3) — расхождение даёт `409 REMOTE_CHANGED` без записи. `GET /api/v1/playlists` не возвращает manifests в статусе DELETED и включает `setupErrorCode` для незавершённых setup.
+Publish writes the preview saved on the manifest (a request without a body); protection against remote changes is performed on the server by comparing the remote hash with the last verified intermediate state (docs/03 §8, step 3) — a mismatch yields `409 REMOTE_CHANGED` without a write. `GET /api/v1/playlists` does not return manifests in DELETED status and includes `setupErrorCode` for unfinished setups.
 
-`POST .../plan` возвращает **сам список**, а не только счётчики: массив `tracks` с `videoId`, `title`, `artists`, `familiarity` и `reasonCodes`, плюс `randomSeed` и `generatedAt`. Показанный список сохраняется на манифесте, поэтому повторный вызов возвращает его же, а `publish` записывает именно его — иначе публиковалось бы то, чего пользователь не видел. Тело `{"regenerate": true}` заменяет предложение новым кандидатом с другим seed.
+`POST .../plan` returns **the list itself**, not only counters: a `tracks` array with `videoId`, `title`, `artists`, `familiarity` and `reasonCodes`, plus `randomSeed` and `generatedAt`. The list that was shown is saved on the manifest, so a repeated call returns the same one, and `publish` writes exactly that — otherwise something the user had not seen would be published. The body `{"regenerate": true}` replaces the proposal with a new candidate with a different seed.
 
-Verification только что созданного playlist выполняет до трёх чтений с задержками: YouTube отвечает неполным payload, пока playlist не станет читаемым. Порядок сверяется с сохранённым desired hash, а не с заново сгенерированным списком, иначе повторный `reconcile` всегда возвращал бы `VERIFICATION_MISMATCH`.
+Verification of a just-created playlist performs up to three reads with delays: YouTube responds with an incomplete payload until the playlist becomes readable. The order is checked against the saved desired hash, not against a freshly generated list; otherwise a repeated `reconcile` would always return `VERIFICATION_MISMATCH`.
 
-Initial setup request также содержит accepted desired hash и results `playlist-gates-v2`; backend до create сохраняет CREATING intent, создаёт private playlist сразу с `effectiveTargetSize` video IDs, немедленно регистрирует возвращённый ID как UNVERIFIED и затем верифицирует полный порядок. Setup response всегда возвращает `managedPlaylistId`, `status`, nullable `playlistId`, `configuredTargetSize`, `effectiveTargetSize`, gate reasons и exact pool counts. При уменьшении размера присутствует `TARGET_SIZE_REDUCED_FOR_POOL`; при невозможности набрать минимум 25 backend отвечает без внешней записи:
+The initial setup request also contains the accepted desired hash and the `playlist-gates-v2` results; before create, the backend saves a CREATING intent, creates a private playlist immediately with `effectiveTargetSize` video IDs, immediately registers the returned ID as UNVERIFIED and then verifies the full order. The setup response always returns `managedPlaylistId`, `status`, nullable `playlistId`, `configuredTargetSize`, `effectiveTargetSize`, gate reasons and exact pool counts. When the size is reduced, `TARGET_SIZE_REDUCED_FOR_POOL` is present; when the minimum of 25 cannot be reached, the backend responds without an external write:
 
 ```json
 {
@@ -214,24 +214,24 @@ Initial setup request также содержит accepted desired hash и resul
 }
 ```
 
-Incremental response может иметь `PARTIAL` и возвращает `remainingItemChanges`, `remainingEstimatedRequests`, `nextContinuationAfter` и тот же `desiredHash`. Продолжение выполняется после 24 часов без требования 15 новых sessions, но только после повторных safety/ownership/hash/budget checks.
+An incremental response may have `PARTIAL` and returns `remainingItemChanges`, `remainingEstimatedRequests`, `nextContinuationAfter` and the same `desiredHash`. Continuation is performed after 24 hours without requiring 15 new sessions, but only after repeated safety/ownership/hash/budget checks.
 
-`DELETE .../setup-artifact` вызывается после явного подтверждения в UI (запрос без тела; kind в пути однозначно определяет manifest, а ID/marker берутся из него). Backend вызывает `delete_managed_playlist`, записывает fresh-read/delete в call ledger и возвращает `{"kind":"...","status":"DELETED"}` при подтверждённом success либо когда remote ID отсутствует (локальный intent). Marker mismatch даёт `403 PLAYLIST_NOT_MANAGED`; неоднозначный внешний ответ сохраняет CLEANUP_REQUIRED и возвращает retryable integration error без автоматического повтора. `POST .../setup` идемпотентен: ACTIVE kinds возвращаются с `alreadyExisting: true` без внешнего вызова.
+`DELETE .../setup-artifact` is called after explicit confirmation in the UI (a request without a body; the kind in the path unambiguously determines the manifest, and the ID/marker are taken from it). The backend calls `delete_managed_playlist`, records the fresh-read/delete in the call ledger and returns `{"kind":"...","status":"DELETED"}` on confirmed success or when the remote ID is absent (a local intent). A marker mismatch yields `403 PLAYLIST_NOT_MANAGED`; an ambiguous external response keeps CLEANUP_REQUIRED and returns a retryable integration error without an automatic retry. `POST .../setup` is idempotent: ACTIVE kinds are returned with `alreadyExisting: true` without an external call.
 
-## 8. Коды ошибок
+## 8. Error codes
 
-| HTTP | Code | Значение |
+| HTTP | Code | Meaning |
 | ---: | --- | --- |
-| 400 | `VALIDATION_FAILED` | неверный DTO |
-| 401 | `YTM_AUTH_REQUIRED` | нет/истёк OAuth |
+| 400 | `VALIDATION_FAILED` | invalid DTO |
+| 401 | `YTM_AUTH_REQUIRED` | OAuth missing/expired |
 | 403 | `PLAYLIST_NOT_MANAGED` | ownership guard |
-| 409 | `PLAYLIST_UNVERIFIED` | обычный publish запрещён до verify/adopt или cleanup |
+| 409 | `PLAYLIST_UNVERIFIED` | regular publish is forbidden until verify/adopt or cleanup |
 | 409 | `REMOTE_CHANGED` | optimistic concurrency conflict |
 | 409 | `JOB_ALREADY_RUNNING` | dedupe/lease |
-| 422 | `PLAYLIST_QUALITY_FAILED` | один или несколько versioned quality gates не пройдены |
-| 429 | `LOCAL_BUDGET_EXCEEDED` | внутренний cooldown/budget |
-| 502 | `YTM_PARSE_ERROR` | несовместимый внешний payload |
+| 422 | `PLAYLIST_QUALITY_FAILED` | one or more versioned quality gates failed |
+| 429 | `LOCAL_BUDGET_EXCEEDED` | internal cooldown/budget |
+| 502 | `YTM_PARSE_ERROR` | incompatible external payload |
 | 503 | `YTM_UNAVAILABLE` | transient external failure |
-| 503 | `CIRCUIT_OPEN` | автоматические вызовы приостановлены |
+| 503 | `CIRCUIT_OPEN` | automatic calls are suspended |
 
-Ни один error response не содержит OAuth endpoint body, headers или stack trace.
+No error response contains an OAuth endpoint body, headers or a stack trace.

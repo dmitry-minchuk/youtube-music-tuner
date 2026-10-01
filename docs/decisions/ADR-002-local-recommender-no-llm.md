@@ -1,56 +1,56 @@
-# ADR-002: локальный рекомендатель без обязательной LLM
+# ADR-002: local recommender without a mandatory LLM
 
-- Статус: Accepted
-- Дата: 2026-08-01
-- Область: recommendation/AI
+- Status: Accepted
+- Date: 2026-08-01
+- Scope: recommendation/AI
 
-## Контекст
+## Context
 
-Нужно выбрать между внешней LLM, локальной маленькой моделью и обычной ML-библиотекой. На старте есть каталог/граф рекомендаций и небольшой поток feedback одного человека; полного аудиосигнала и крупной размеченной выборки нет.
+A choice is needed between an external LLM, a small local model and an ordinary ML library. At the start there is a catalogue/recommendation graph and a small feedback stream from one person; there is no full audio signal and no large labelled dataset.
 
-## Рассмотренные варианты
+## Options considered
 
-### Внешняя LLM
+### External LLM
 
-Плюсы: понимает свободный текст, может красиво объяснять. Минусы: история покидает компьютер, стоимость/latency, слабая пригодность для числового online ranking, нет устойчивой памяти без отдельного feature store.
+Pros: understands free text, can explain well. Cons: the history leaves the computer, cost/latency, weak suitability for numeric online ranking, no durable memory without a separate feature store.
 
-### Локальная general-purpose LLM
+### Local general-purpose LLM
 
-Плюсы: приватность и текстовый интерфейс. Минусы: model server, память/образ, всё ещё не тот inductive bias для ранжирования; объяснение не гарантирует правильный выбор трека.
+Pros: privacy and a text interface. Cons: model server, memory/image, still not the right inductive bias for ranking; an explanation does not guarantee the right choice of track.
 
 ### Audio embedding model
 
-Плюсы: реальная акустическая близость. Минусы: нужен законный доступ к audio, большая вычислительная/операционная цена; ytmusicapi не является источником аудиофайлов для анализа.
+Pros: real acoustic similarity. Cons: requires lawful access to audio, large computational/operational cost; ytmusicapi is not a source of audio files for analysis.
 
-### Классический локальный recommender/contextual bandit
+### Classic local recommender/contextual bandit
 
-Плюсы: учится на малом online feedback, миллисекунды CPU, прозрачен, воспроизводим, легко управляет exploration. Минусы: нужны аккуратные признаки и safeguards; нет магического понимания текста/аудио.
+Pros: learns from small online feedback, milliseconds of CPU, transparent, reproducible, easily controls exploration. Cons: requires careful features and safeguards; no magical understanding of text/audio.
 
-## Решение
+## Decision
 
-Использовать гибрид:
+Use a hybrid:
 
-1. candidate generation из кешированных related/radio/mood источников YouTube Music;
-2. зафиксированный rule-based ranker для чистого baseline из 100 сессий;
-3. локальный LinUCB/contextual bandit на NumPy в SHADOW после bootstrap 40 и serving только после 100 сессий/safety gates;
+1. candidate generation from cached related/radio/mood sources of YouTube Music;
+2. a fixed rule-based ranker for a clean baseline of 100 sessions;
+3. a local LinUCB/contextual bandit on NumPy in SHADOW after bootstrap 40 and serving only after 100 sessions/safety gates;
 4. deterministic diversity/fatigue reranker;
-5. temperature управляет quota и uncertainty bonus.
+5. temperature controls quota and uncertainty bonus.
 
-Serving ownership хранится явно: BASELINE/SHADOW обслуживает `rule-score-v1` с nullable shadow model, ACTIVE — конкретный LinUCB snapshot. Для общих playlist gates rule score отображается в `quality_expected=2*rule_score-1`, а ACTIVE использует LinUCB exploitation `theta^T x`; uncertainty/exploration не участвует в quality floor.
+Serving ownership is stored explicitly: BASELINE/SHADOW is served by `rule-score-v1` with a nullable shadow model, ACTIVE by a specific LinUCB snapshot. For the shared playlist gates, the rule score is mapped to `quality_expected=2*rule_score-1`, while ACTIVE uses LinUCB exploitation `theta^T x`; uncertainty/exploration does not participate in the quality floor.
 
-Никакая LLM не является runtime dependency и не получает telemetry.
+No LLM is a runtime dependency or receives telemetry.
 
-## Последствия
+## Consequences
 
-- Docker остаётся лёгким и запускается без GPU/model download.
-- Модель можно объяснить реальными reason codes.
-- Raw telemetry остаётся локальной.
-- Улучшение зависит от качества событий и candidate pool, а не от размера language model.
-- Позже можно добавить маленькие metadata embeddings или optional text-to-mood parser как enrichment, не меняя core ranker.
+- Docker stays lightweight and runs without a GPU/model download.
+- The model can be explained with real reason codes.
+- Raw telemetry stays local.
+- Improvement depends on the quality of events and the candidate pool, not on the size of a language model.
+- Later, small metadata embeddings or an optional text-to-mood parser can be added as enrichment, without changing the core ranker.
 
-## Условия пересмотра
+## Revisit conditions
 
-- после 500+ квалифицированных сессий offline/online метрики показывают plateau;
-- candidate diversity недостаточна из-за слабых metadata features;
-- появляется законный и стабильный источник audio features;
-- пользователь явно хочет natural-language mood input и согласует локальный model runtime.
+- after 500+ qualified sessions, offline/online metrics show a plateau;
+- candidate diversity is insufficient because of weak metadata features;
+- a lawful and stable source of audio features appears;
+- the user explicitly wants natural-language mood input and agrees to a local model runtime.

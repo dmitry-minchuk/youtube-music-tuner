@@ -1,26 +1,26 @@
-# Системная архитектура
+# System architecture
 
-## 1. Архитектурный стиль
+## 1. Architectural style
 
-Локальный модульный монолит с одним web-процессом и одной SQLite-базой. Frontend собирается отдельно в multi-stage Docker build, но в runtime раздаётся FastAPI из того же контейнера. Такое устройство снижает операционную сложность и исключает Redis, message broker и отдельный model server.
+A local modular monolith with a single web process and a single SQLite database. The frontend is built separately in a multi-stage Docker build, but at runtime it is served by FastAPI from the same container. This design reduces operational complexity and eliminates Redis, a message broker and a separate model server.
 
-Внутри монолита сохраняются строгие границы: UI, playback telemetry, recommendation domain и YouTube adapter не должны знать детали друг друга через общие глобальные объекты.
+Strict boundaries are kept inside the monolith: the UI, playback telemetry, the recommendation domain and the YouTube adapter must not know each other's details through shared global objects.
 
-## 2. Контекст
+## 2. Context
 
 ```mermaid
 flowchart LR
-    U["Пользователь в браузере"] -->|"http://127.0.0.1:43127"| T["YouTube Music Tuner"]
-    T -->|"метаданные, библиотека, плейлисты"| Y["YouTube Music через ytmusicapi"]
+    U["User in the browser"] -->|"http://127.0.0.1:43127"| T["YouTube Music Tuner"]
+    T -->|"metadata, library, playlists"| Y["YouTube Music via ytmusicapi"]
     T -->|"OAuth device flow"| G["Google OAuth"]
-    U -->|"воспроизведение и player events"| I["YouTube IFrame Player"]
+    U -->|"playback and player events"| I["YouTube IFrame Player"]
     I -->|"state, time, duration, errors"| T
-    T -->|"локальные события и модели"| D[("SQLite + local files")]
+    T -->|"local events and models"| D[("SQLite + local files")]
 ```
 
-Воспроизведение выполняется браузером через официальный IFrame Player. Backend не получает и не проксирует аудиопоток.
+Playback is performed by the browser through the official IFrame Player. The backend does not receive or proxy the audio stream.
 
-## 3. Контейнерная схема
+## 3. Container diagram
 
 ```mermaid
 flowchart TB
@@ -45,40 +45,40 @@ flowchart TB
     X --> O["/data/secrets/oauth.json"]
 ```
 
-## 4. Выбранный стек
+## 4. Selected stack
 
 ### Backend
 
-- Python 3.13 в runtime-образе;
-- FastAPI + Uvicorn, один worker;
-- Pydantic для внешних DTO и настроек;
+- Python 3.13 in the runtime image;
+- FastAPI + Uvicorn, a single worker;
+- Pydantic for external DTOs and settings;
 - SQLAlchemy 2 + Alembic;
-- SQLite в WAL mode;
-- `ytmusicapi==1.12.1` на старте реализации;
-- NumPy для локального LinUCB/contextual-bandit расчёта;
-- структурированные JSON-логи стандартного `logging`.
+- SQLite in WAL mode;
+- `ytmusicapi==1.12.1` at the start of implementation;
+- NumPy for the local LinUCB/contextual-bandit computation;
+- structured JSON logs via the standard `logging`.
 
-Точные версии всех runtime-зависимостей фиксируются lockfile. Обновление `ytmusicapi` — отдельная контролируемая операция.
+The exact versions of all runtime dependencies are pinned by a lockfile. Updating `ytmusicapi` is a separate controlled operation.
 
 ### Frontend
 
 - React + TypeScript + Vite;
-- TanStack Query для server state;
-- Zustand либо небольшой reducer-store для player/queue state;
-- CSS variables + CSS Modules; без тяжёлой компонентной системы;
+- TanStack Query for server state;
+- Zustand or a small reducer store for player/queue state;
+- CSS variables + CSS Modules; without a heavy component system;
 - YouTube IFrame Player API;
-- Playwright для end-to-end тестов.
+- Playwright for end-to-end tests.
 
 ### Runtime
 
 - multi-stage Dockerfile: Node build stage → Python runtime stage;
-- Docker Compose для порта, named volume, health check и конфигурации;
+- Docker Compose for the port, named volume, health check and configuration;
 - bind `127.0.0.1:${APP_PORT:-43127}:43127`;
-- один named volume `tuner-data:/data`; runtime identity фиксирована как UID/GID `10001:10001`.
+- a single named volume `tuner-data:/data`; the runtime identity is fixed as UID/GID `10001:10001`.
 
-## 5. Backend-модули
+## 5. Backend modules
 
-Планируемая структура:
+Planned structure:
 
 ```text
 backend/app/
@@ -96,9 +96,9 @@ backend/app/
   main.py
 ```
 
-Правило зависимости: `api/jobs → application services → domain + repository interfaces`; реализация `ytmusicapi` не импортируется из domain/recommender.
+Dependency rule: `api/jobs → application services → domain + repository interfaces`; the `ytmusicapi` implementation is not imported from domain/recommender.
 
-## 6. Frontend-модули
+## 6. Frontend modules
 
 ```text
 frontend/src/
@@ -115,9 +115,9 @@ frontend/src/
   styles/            tokens and global layout
 ```
 
-`player/iframeAdapter` — единственное место, знающее глобальный объект `YT.Player`. Остальной frontend работает с интерфейсом `PlayerPort`.
+`player/iframeAdapter` is the only place that knows the global `YT.Player` object. The rest of the frontend works with the `PlayerPort` interface.
 
-## 7. Основной поток данных
+## 7. Main data flow
 
 ```mermaid
 sequenceDiagram
@@ -144,66 +144,66 @@ sequenceDiagram
     API->>DB: verify and record snapshot
 ```
 
-## 8. Scheduler и конкурентность
+## 8. Scheduler and concurrency
 
-Отдельный job broker не нужен. Один Uvicorn worker запускает лёгкий scheduler в lifespan приложения. Периодическая проверка на due jobs читает таблицу `jobs`, а каждая работа захватывает lease с `locked_until`.
+A separate job broker is not needed. A single Uvicorn worker starts a lightweight scheduler in the application's lifespan. The periodic check for due jobs reads the `jobs` table, and each job acquires a lease with `locked_until`.
 
-Это защищает от повторного выполнения после рестарта и оставляет возможность позднее вынести worker без изменения доменной логики. Даже при ошибочной конфигурации с двумя процессами уникальный idempotency key и lease не позволят одновременно публиковать один плейлист.
+This protects against repeated execution after a restart and leaves the option of moving the worker out later without changing the domain logic. Even with an erroneous configuration with two processes, the unique idempotency key and the lease will not allow one playlist to be published concurrently.
 
-Типы работ:
+Job types:
 
 - `library_sync`;
-- `candidate_refresh` — раз в сутки, обход от свежих seed;
-- `graph_expand` — каждые 6 часов, расширение границы графа кандидатов;
-- `affinity_rollup` — каждые 6 часов, пересчёт скользящих окон агрегатов;
+- `candidate_refresh` — once a day, traversal from fresh seeds;
+- `graph_expand` — every 6 hours, expanding the frontier of the candidate graph;
+- `affinity_rollup` — every 6 hours, recalculation of the rolling windows of the aggregates;
 - `model_train`;
 - `playlist_publish`;
 - `retention_cleanup`;
 - `database_backup`.
 
-`graph_expand` — единственная периодическая работа кроме `candidate_refresh`, которая тратит внешние вызовы; `affinity_rollup` полностью локальная.
+`graph_expand` is the only periodic job other than `candidate_refresh` that spends external calls; `affinity_rollup` is entirely local.
 
-### Темп планировщика
+### Scheduler pace
 
-Цикл не спит после успешно выполненной работы — иначе очередь разгребалась бы по одной задаче за 5 секунд. Отсюда три правила, без которых постоянно падающая работа превращается в tight loop:
+The loop does not sleep after a successfully completed job — otherwise the queue would be worked through at one task per 5 seconds. Hence three rules, without which a constantly failing job turns into a tight loop:
 
-- **любая завершённая попытка считается попыткой.** Следующая постановка не раньше, чем через `min(interval, 30 минут)` после предыдущего завершения, независимо от исхода. Иначе провал не сдвигает «последний успешный запуск», и работа ставится заново на ближайшем же опросе;
-- **открытый circuit откладывает только внешние работы.** `model_train`, `retention_cleanup`, `database_backup` и `affinity_rollup` не обращаются к YouTube, и отказ им лишь плодит записи о неудачах;
-- **не более 20 работ подряд без паузы.**
+- **any completed attempt counts as an attempt.** The next enqueueing is no sooner than `min(interval, 30 minutes)` after the previous completion, regardless of the outcome. Otherwise a failure does not shift the "last successful run", and the job is enqueued again at the very next poll;
+- **an open circuit defers only external jobs.** `model_train`, `retention_cleanup`, `database_backup` and `affinity_rollup` do not call YouTube, and refusing to run them only multiplies failure records;
+- **no more than 20 jobs in a row without a pause.**
 
-Цена ошибки измерена: до исправления планировщик создавал 331 запись в минуту, таблица `jobs` выросла до 2,5 млн строк, а файл базы — до 944 МБ.
+The price of the error has been measured: before the fix the scheduler created 331 records per minute, the `jobs` table grew to 2.5 million rows, and the database file to 944 MB.
 
-## 9. Состояние и кеширование
+## 9. State and caching
 
-- Browser state: текущая очередь, позиция, UI-фильтры и durable IndexedDB outbox неподтверждённых событий.
-- SQLite: источник истины для каталога, телеметрии, модели, jobs и publish manifest.
-- YouTube Music: внешний источник библиотеки и целевое хранилище управляемых плейлистов, но не источник истины для локальной телеметрии.
-- In-memory cache: допустим только как ускорение; после рестарта всё восстанавливается из SQLite.
+- Browser state: the current queue, position, UI filters and a durable IndexedDB outbox of unconfirmed events.
+- SQLite: the source of truth for the catalogue, telemetry, the model, jobs and the publish manifest.
+- YouTube Music: the external source of the library and the target storage of managed playlists, but not the source of truth for local telemetry.
+- In-memory cache: allowed only as a speed-up; after a restart everything is restored from SQLite.
 
-## 10. Обработка отказов
+## 10. Failure handling
 
-| Отказ | Поведение |
+| Failure | Behaviour |
 | --- | --- |
-| YouTube Music недоступен | UI продолжает работать на кешированных данных; job получает backoff. |
-| OAuth истёк/отозван | write/sync jobs блокируются, UI показывает reconnect; локальное слушание кешированной очереди остаётся доступным, если iframe способен загрузить трек. |
-| Сломался parser `ytmusicapi` | adapter возвращает typed integration error; сырой ответ не логируется целиком; последняя успешная библиотека сохраняется. |
-| Контейнер перезапущен во время publish | state machine делает fresh read и verification: подтверждает COMPLETE, сохраняет PARTIAL с continuation на следующее 24-часовое окно либо помечает FAILED; WRITING слепо не повторяется. |
-| Дублирован batch | unique `client_event_id` превращает повтор в no-op. |
-| IFrame error | событие нейтрально для вкуса, трек временно помечается playback-unavailable и очередь идёт дальше. |
-| Повреждение БД | запуск останавливается с явной ошибкой; автоматическое восстановление из backup без подтверждения не выполняется. |
+| YouTube Music unavailable | The UI keeps working on cached data; the job gets backoff. |
+| OAuth expired/revoked | write/sync jobs are blocked, the UI shows reconnect; local listening to the cached queue remains available if the iframe is able to load the track. |
+| `ytmusicapi` parser broke | the adapter returns a typed integration error; the raw response is not logged in full; the last successful library is preserved. |
+| Container restarted during publish | the state machine performs a fresh read and verification: confirms COMPLETE, saves PARTIAL with a continuation for the next 24-hour window, or marks FAILED; WRITING is not blindly retried. |
+| Batch duplicated | a unique `client_event_id` turns the repeat into a no-op. |
+| IFrame error | the event is neutral for taste, the track is temporarily marked playback-unavailable and the queue moves on. |
+| DB corruption | startup halts with an explicit error; automatic restoration from backup without confirmation is not performed. |
 
-## 11. Наблюдаемость
+## 11. Observability
 
-- `GET /health/live` — процесс отвечает;
-- `GET /health/ready` — миграции применены, БД доступна;
-- UI Settings показывает last successful sync/train/publish, количество pending events и открытый circuit breaker;
-- логи содержат `request_id`, `job_id`, `operation`, `duration_ms`, `outcome`, но не трековые токены авторизации и не полные внешние payload;
-- таблица `api_call_ledger` даёт локальный audit внешних операций.
+- `GET /health/live` — the process responds;
+- `GET /health/ready` — migrations applied, DB available;
+- UI Settings shows the last successful sync/train/publish, the number of pending events and the open circuit breaker;
+- logs contain `request_id`, `job_id`, `operation`, `duration_ms`, `outcome`, but not track authorisation tokens and not full external payloads;
+- the `api_call_ledger` table provides a local audit of external operations.
 
-## 12. Архитектурные ограничения
+## 12. Architectural constraints
 
-- Backend не должен получать прямой URL аудиопотока.
-- UI не должен имитировать, скрывать или перекрывать обязательные элементы YouTube player.
-- Рекомендация не должна зависеть от доступности LLM или интернета после refresh кандидатов.
-- Обычный publish разрешён только для ACTIVE записи `managed_playlists` с совпавшими playlist ID, instance и remote ownership marker. CREATING/UNVERIFIED/CLEANUP_REQUIRED допускают лишь reconciliation, verify/adopt или подтверждённый cleanup exact marker.
-- Нельзя отправлять внешние запросы из React напрямую, кроме YouTube IFrame API; все библиотечные операции проходят через backend.
+- The backend must not receive a direct audio stream URL.
+- The UI must not imitate, hide or overlap the mandatory elements of the YouTube player.
+- A recommendation must not depend on the availability of an LLM or the internet after the candidate refresh.
+- An ordinary publish is allowed only for an ACTIVE `managed_playlists` record with matching playlist ID, instance and remote ownership marker. CREATING/UNVERIFIED/CLEANUP_REQUIRED permit only reconciliation, verify/adopt or confirmed cleanup of the exact marker.
+- External requests must not be sent from React directly, except the YouTube IFrame API; all library operations go through the backend.

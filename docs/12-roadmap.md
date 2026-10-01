@@ -1,115 +1,115 @@
-# Roadmap разработки
+# Development roadmap
 
-## Принцип поставки
+## Delivery principle
 
-Каждый этап заканчивается работающим вертикальным срезом. Интеграционные записи в YouTube Music добавляются последними, после локального плеера, телеметрии и preview.
+Each phase ends with a working vertical slice. YouTube Music integration writes are added last, after the local player, telemetry and preview.
 
 ## Phase 0 — foundation
 
-- Инициализировать Git и базовые quality tools.
-- Создать backend/frontend skeleton и multi-stage Dockerfile.
-- Добавить Compose на `127.0.0.1:43127`, named volume `/data` и fixed runtime UID/GID `10001:10001`.
-- Реализовать health endpoints, settings и Alembic bootstrap.
-- Добавить CI/local команды lint, typecheck, unit test, build.
+- Initialise Git and the basic quality tools.
+- Create the backend/frontend skeleton and a multi-stage Dockerfile.
+- Add Compose on `127.0.0.1:43127`, a named volume `/data` and a fixed runtime UID/GID `10001:10001`.
+- Implement health endpoints, settings and Alembic bootstrap.
+- Add CI/local commands lint, typecheck, unit test, build.
 
-Definition of done: чистая машина запускает placeholder UI одной командой; restart сохраняет test row; health check работает.
+Definition of done: a clean machine launches the placeholder UI with one command; restart preserves the test row; the health check works.
 
 ## Phase 1 — read-only YouTube integration
 
-- Реализовать `MusicCatalogPort` и ytmusicapi adapter `1.12.1`.
-- CLI OAuth device flow и secure secret files.
+- Implement `MusicCatalogPort` and the ytmusicapi adapter `1.12.1`.
+- CLI OAuth device flow and secure secret files.
 - Account, liked tracks, playlists, history sync.
 - TTL caches, call ledger, cooldown/circuit breaker.
-- UI Settings, Collection и Playlists в read-only режиме.
-- Contract fixtures и real read-only smoke.
+- UI Settings, Collection and Playlists in read-only mode.
+- Contract fixtures and real read-only smoke.
 
-Definition of done: библиотека видна локально, повторное открытие экранов не вызывает внешний polling, auth error понятен.
+Definition of done: the library is visible locally, reopening screens does not trigger external polling, an auth error is understandable.
 
-## Phase 2 — собственный player и telemetry
+## Phase 2 — own player and telemetry
 
-- IFrame `PlayerPort` и visible Now Playing layout.
+- IFrame `PlayerPort` and visible Now Playing layout.
 - Queue, play/pause/next/previous/seek/volume.
-- IndexedDB event outbox, 15-секундный `progress_tick` и batch API.
+- IndexedDB event outbox, 15-second `progress_tick` and batch API.
 - Raw events, session aggregator, reward v1.
 - Insights baseline status.
-- Fake player tests и browser smoke.
+- Fake player tests and browser smoke.
 
-Definition of done: фактические секунды корректно различают listen/seek/buffer; restart/reload не теряет подтверждённые события.
+Definition of done: actual seconds correctly distinguish listen/seek/buffer; restart/reload does not lose confirmed events.
 
 ## Phase 3 — Wave v1
 
-- Candidate refresh related/radio/mood с TTL.
+- Candidate refresh related/radio/mood with TTL.
 - Rule-based cold-start ranker.
 - Temperature quotas, mood context, diversity reranker.
-- Wave/extend API и главный UI.
-- Детерминированные reason codes.
+- Wave/extend API and the main UI.
+- Deterministic reason codes.
 
-Definition of done: Wave играет минимум 40 элементов из локального pool, температура заметно меняет состав без новых внешних вызовов.
+Definition of done: Wave plays at least 40 items from the local pool, temperature noticeably changes the composition without new external calls.
 
 ## Phase 4 — online learning
 
-- Feature schema v1 и stored selection snapshots.
+- Feature schema v1 and stored selection snapshots.
 - LinUCB model/update/snapshot.
-- Bootstrap thresholds, SHADOW с 40-й сессии, чистый rule-based baseline 100 и activation safety gates.
-- Offline replay metrics и model rollback.
-- Insights сравнение с baseline.
+- Bootstrap thresholds, SHADOW from the 40th session, a clean rule-based baseline of 100 and activation safety gates.
+- Offline replay metrics and model rollback.
+- Insights comparison with baseline.
 
-Definition of done: после достаточной реальной телеметрии model snapshot активируется автоматически и воспроизводимо влияет на порядок.
+Definition of done: after sufficient real telemetry the model snapshot is activated automatically and reproducibly influences the order.
 
-## Phase 5 — безопасная публикация
+## Phase 5 — safe publication
 
-- Crash-safe создание трёх private managed playlists: CREATING intent, initial adaptive `video_ids`, UNVERIFIED registration, marker reconciliation и verification.
-- Versioned playlist quality gates с rule/LinUCB `quality_expected`, adaptive target 25–60, точными pool diagnostics, desired list и minimal convergent diff planner.
-- Preview, backup, PARTIAL continuation без нового listening threshold и отдельные caps: 15 item changes, 15 mutating/17 total requests на playlist за 24-часовое окно.
+- Crash-safe creation of three private managed playlists: CREATING intent, initial adaptive `video_ids`, UNVERIFIED registration, marker reconciliation and verification.
+- Versioned playlist quality gates with rule/LinUCB `quality_expected`, adaptive target 25–60, exact pool diagnostics, desired list and a minimal convergent diff planner.
+- Preview, backup, PARTIAL continuation without a new listening threshold and separate caps: 15 item changes, 15 mutating/17 total requests per playlist per 24-hour window.
 - Fresh read/hash conflict/verification.
-- Manual restore и auto-publish cooldown.
-- Real write smoke на отдельном test playlist.
+- Manual restore and auto-publish cooldown.
+- Real write smoke on a separate test playlist.
 
-Definition of done: плейлисты появляются в официальном iPhone-приложении; никакой чужой playlist не может быть изменён тестами или UI.
+Definition of done: the playlists appear in the official iPhone app; no playlist that is not Tuner's own can be changed by tests or UI.
 
 ## Phase 6 — hardening
 
 - Daily backup + verified retention.
-- 24-hour soak и API-budget audit.
+- 24-hour soak and API-budget audit.
 - Secret scanning, CSP/Origin/CSRF/Host/DNS-rebinding tests, dependency scan.
 - Empty/error/stale/accessibility polish.
-- Обновление runbook реальными командами и screenshots.
+- Updating the runbook with real commands and screenshots.
 
-Definition of done: пройдены AT-01…AT-12, зафиксирована версия образа, auto-publish можно безопасно включить.
+Definition of done: AT-01…AT-12 pass, the image version is recorded, auto-publish can be safely enabled.
 
-## Phase 7 — качество подбора (выполнено 2026-08-01…03)
+## Phase 7 — selection quality (done 2026-08-01…03)
 
-Всё, что описано ниже, реализовано и проверено на живой библиотеке; подробности — в ADR-004.
+Everything described below has been implemented and verified on the live library; details are in ADR-004.
 
-- **Замкнут контур обратной связи.** Агрегаты трека и артиста заполняются на приёме телеметрии. До этого они были пусты, и признаки усталости, недавнего пропуска, новизны и rediscovery всегда равнялись нулю.
-- **Пул кандидатов стал графом.** Рёбра больше не выбрасываются по TTL, несут расстояние от избранного и наращиваются отдельной работой каждые 6 часов. Кратность связей (сколько избранных треков указывают на кандидата) используется как признак.
-- **Ширина прежде глубины.** Нераскрытые избранные раскрываются раньше достижимых кандидатов: обход, жадный по поддержке, углублял один кластер и оставлял большую часть библиотеки непредставленной.
-- **Свежесть как ограничение.** Адаптивное окно новизны, память о четырёх последних волнах и об артистах в них, стохастический отбор с окном, растущим вместе с пулом, ограничение ротации знакомого, карантин за повторные пропуски.
-- **Публикация перестала быть слепой.** Preview отдаёт состав, играет его и перегенерируется; публикуется просмотренный список; удалить можно любой свой плейлист.
-- **Устранены три отказа инфраструктуры.** Tight loop планировщика, потеря телеметрии из-за write-блокировки SQLite и невозможность верификации только что созданного плейлиста.
+- **The feedback loop is closed.** Track and artist aggregates are populated at telemetry ingest. Before that they were empty, and the fatigue, recent-skip, novelty and rediscovery features were always zero.
+- **The candidate pool became a graph.** Edges are no longer discarded by TTL, carry the distance from the favourites and are grown by a separate job every 6 hours. Link multiplicity (how many favourite tracks point at a candidate) is used as a feature.
+- **Breadth before depth.** Unexpanded favourites are expanded before reachable candidates: a traversal greedy by support deepened a single cluster and left most of the library unrepresented.
+- **Freshness as a constraint.** An adaptive novelty window, memory of the four most recent waves and of the artists in them, stochastic selection with a window that grows together with the pool, a limit on familiar rotation, quarantine for repeated skips.
+- **Publishing stopped being blind.** Preview returns the composition, plays it and can be regenerated; the previewed list is published; any own playlist can be deleted.
+- **Three infrastructure failures were fixed.** The scheduler tight loop, telemetry loss due to SQLite write locking, and the inability to verify a just-created playlist.
 
-Измеренный эффект: пересечение соседних волн 95% → 0–25%, повтор discovery-треков → 0%, играбельных кандидатов 119 → 3045, охват избранного 8/51 → 61/61, разных артистов за шесть волн 78 → 161.
+Measured effect: overlap of adjacent waves 95% → 0–25%, repetition of discovery tracks → 0%, playable candidates 119 → 3045, favourites coverage 8/51 → 61/61, distinct artists over six waves 78 → 161.
 
-## Первый implementation slice
+## First implementation slice
 
-Рекомендуемый первый PR/commit должен содержать только:
+The recommended first PR/commit must contain only:
 
-1. FastAPI `/health/live` и `/health/ready`;
-2. пустую SQLite schema + migration;
-3. React shell с пятью разделами и status fetch;
-4. Dockerfile/Compose на 43127;
-5. unit smoke и container health test.
+1. FastAPI `/health/live` and `/health/ready`;
+2. an empty SQLite schema + migration;
+3. a React shell with five sections and a status fetch;
+4. Dockerfile/Compose on 43127;
+5. unit smoke and container health test.
 
-OAuth и `ytmusicapi` добавляются следующим изолированным slice. Так проблемы Docker/UI не смешиваются с нестабильностью внешней интеграции.
+OAuth and `ytmusicapi` are added in the next isolated slice. This way Docker/UI problems are not mixed with the instability of the external integration.
 
-## Отложенные решения
+## Deferred decisions
 
-Они не блокируют MVP:
+They do not block the MVP:
 
-- нужна ли metadata embedding-модель после 500+ сессий;
-- добавлять ли LAN access с отдельной auth;
-- нужны ли дополнительные managed playlist по mood;
-- поддерживать ли PWA/offline shell;
-- добавлять ли import из Яндекс Музыки отдельным одноразовым инструментом.
+- whether a metadata embedding model is needed after 500+ sessions;
+- whether to add LAN access with separate auth;
+- whether additional managed playlists per mood are needed;
+- whether to support a PWA/offline shell;
+- whether to add an import from Yandex Music as a separate one-off tool.
 
-Любое из этих расширений требует отдельного BRD delta и ADR, а не скрытого расширения текущего scope.
+Any of these extensions requires a separate BRD delta and ADR, rather than a hidden expansion of the current scope.

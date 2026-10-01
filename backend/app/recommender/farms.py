@@ -1,4 +1,4 @@
-"""Artist-level farm detection (docs/05 section 4, "Слоп-фильтр").
+"""Artist-level farm detection (docs/05 section 4, "Slop filter").
 
 A farm betrays itself behaviourally: one "artist", dozens of templated
 tracks, the same slop markers on most of them. Per-track heuristics catch

@@ -1,33 +1,33 @@
 # UI/UX
 
-## 1. Направление
+## 1. Direction
 
-Интерфейс использует сильные стороны Яндекс Музыки как референса — спокойную иерархию, минимум визуального шума, быстрый вход в персональный поток, крупные обложки и постоянный плеер. Брендинг, точная композиция экранов, цвета, иконки и microcopy не копируются.
+The interface takes the strengths of Yandex Music as a reference — a calm hierarchy, minimal visual noise, quick entry into the personal flow, large covers and a persistent player. Branding, the exact screen composition, colours, icons and microcopy are not copied.
 
-Собственная визуальная идентичность:
+Own visual identity:
 
-- тёмный графитовый фон, а не чистый чёрный;
-- акцент `warm coral` для primary action и `cool teal` для discovery/temperature;
-- мягкие поверхности без чрезмерных рамок;
-- большие интервалы и одна главная цель на экран;
-- шрифт системный, без внешней font-зависимости в MVP.
+- dark graphite background, not pure black;
+- `warm coral` accent for the primary action and `cool teal` for discovery/temperature;
+- soft surfaces without excessive borders;
+- generous spacing and one main goal per screen;
+- system font, no external font dependency in the MVP.
 
-## 2. Информационная архитектура
+## 2. Information architecture
 
-Левое меню:
+Left menu:
 
-- `Wave` — главный экран;
-- `Collection` — лайки и локально известные треки;
-- `Playlists` — удалённые и managed playlists;
-- `Insights` — обучение, сигналы и качество;
-- `Settings` — подключение, sync, automation, privacy.
+- `Wave` — the main screen;
+- `Collection` — likes and locally known tracks;
+- `Playlists` — remote and managed playlists;
+- `Insights` — learning, signals and quality;
+- `Settings` — connection, sync, automation, privacy.
 
-Постоянные области:
+Persistent areas:
 
-- центральный контент;
-- видимая область YouTube player минимум 200×200;
-- нижняя player bar;
-- компактный status indicator sync/API только при проблеме или активной операции.
+- central content;
+- a visible YouTube player area of at least 200×200;
+- bottom player bar;
+- a compact sync/API status indicator only when there is a problem or an active operation.
 
 ## 3. Desktop wireframe
 
@@ -51,22 +51,22 @@
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-На ширине 1024–1279 px правая панель превращается в раскрываемый Now Playing drawer, но iframe при воспроизведении остаётся доступным и достаточного размера.
+At a width of 1024–1279 px the right panel turns into an expandable Now Playing drawer, but the iframe stays available and of sufficient size during playback.
 
 ## 4. Wave
 
-Первый viewport содержит только:
+The first viewport contains only:
 
-- приветствие/контекст;
+- greeting/context;
 - mood selector;
-- temperature slider с подписями `Familiar` и `Discovery`;
-- один primary button `Start Wave` или `Resume`;
-- первые элементы `Up next`;
-- краткий learning/status label.
+- temperature slider labelled `Familiar` and `Discovery`;
+- one primary button, `Start Wave` or `Resume`;
+- the first `Up next` items;
+- a short learning/status label.
 
-Temperature slider показывает ожидаемый состав, например `55% familiar · 45% discovery`, а не абстрактное число. Изменение не перестраивает уже проигранную историю, только будущий хвост.
+The temperature slider shows the expected composition, for example `55% familiar · 45% discovery`, not an abstract number. A change does not rebuild the history that has already been played, only the future tail.
 
-У каждого трека доступен `Why this?` с 1–3 рассчитанными причинами без генеративного текста:
+Every track has `Why this?` available, with 1–3 computed reasons and no generated text:
 
 - `Liked artist, new track`;
 - `Related to …`;
@@ -74,98 +74,98 @@ Temperature slider показывает ожидаемый состав, нап�
 - `Not played for 8 months`;
 - `Discovery pick with high uncertainty`.
 
-В плеере рядом с `Like`/`Dislike` есть третья кнопка `Not my thing` («Don't Like At All», docs/05 §11): она ставит локальный veto на трек, его артиста и графовую окрестность и сразу переключает на следующий трек. Повторное нажатие снимает veto. В отличие от `Dislike`, сигнал никогда не уходит в YouTube.
+In the player, next to `Like`/`Dislike`, there is a third button, `Not my thing` ("Don't Like At All", docs/05 §11): it sets a local veto on the track, its artist and its graph neighbourhood and immediately switches to the next track. Pressing it again lifts the veto. Unlike `Dislike`, the signal is never sent to YouTube.
 
-Иерархия тяжести различима визуально, не только текстом: `Dislike` — нейтральная кнопка с маленьким крестиком в круге (зачёркнут один трек), `Not my thing` несёт danger-тон уже в покое и полностью перечёркнутый круг (закрыто направление); нажатое состояние — coral-заливка со свечением. Вес кнопки и есть предупреждение о силе действия.
+The severity hierarchy is distinguishable visually, not only by text: `Dislike` is a neutral button with a small cross in a circle (one track crossed out), `Not my thing` carries a danger tone even at rest and a fully struck-through circle (a direction closed off); the pressed state is a coral fill with a glow. The weight of the button is itself the warning about how strong the action is.
 
-`Dislike` тоже сразу переключает на следующий трек, а любой негативный сигнал незаметно перестраивает непроигранный хвост очереди (docs/04 §8) — следующие треки уже учитывают только что выраженное отношение.
+`Dislike` also switches to the next track immediately, and any negative signal quietly rebuilds the unplayed tail of the queue (docs/04 §8) — the next tracks already account for the attitude just expressed.
 
 ## 5. Collection
 
-- вкладки `Liked`, `Recently played`, `Discovered`, `Blocked`;
-- поиск/фильтр работает по локальному каталогу;
-- строки показывают local affinity, last played и sync state только по запросу `Details`, чтобы не перегружать основной список;
-- bulk editing внешней библиотеки не входит в MVP.
+- tabs `Liked`, `Recently played`, `Discovered`, `Blocked`;
+- search/filter works over the local catalogue;
+- rows show local affinity, last played and sync state only on request via `Details`, so as not to overload the main list;
+- bulk editing of the external library is not part of the MVP.
 
 ## 6. Playlists
 
-Две секции:
+Two sections:
 
-- `Tuner playlists` — Familiar, Balance, Discovery с lifecycle status, configured/effective size, датой актуальности контента и кнопками Preview/Refresh content/Regenerate/Delete. Создание плейлиста сразу наполняет его полной подборкой — «publish» в смысле «обнародовать» не существует (плейлисты приватные и видны владельцу в YouTube Music немедленно). Кнопка называется `Refresh content` и означает единственное, что она делает: пересобрать подборку по текущему вкусу и докатить разницу к уже живущему плейлисту. Карточка показывает `Contents from <дата>`, где создание считается первым изданием: «Never published» сразу после создания намекало на несделанную работу, которой нет. Набор действий зависит от состояния: ACTIVE — Refresh content/Delete playlist; UNVERIFIED, CLEANUP_REQUIRED и CREATING с remote ID — Verify/adopt + Delete setup artifact; CREATING без remote ID — Create on YouTube + Delete setup artifact. Удалённый плейлист исчезает из списка (это и есть подтверждение удаления), и появляется кнопка создания недостающих; результат Verify/adopt всегда показывается словами, а застрявший setup — своим `setupErrorCode`. Удалённый на YouTube плейлист может оставаться в списке «Your YouTube Music playlists» до следующего library sync — это кеш;
-- `Your YouTube Music playlists` — read-only карточки и действие `Play in Tuner`. Размер показывается как есть: YouTube не сообщает его для своих системных плейлистов, и такая карточка пишет «size not reported by YouTube», а не «0 tracks». Для Liked Music подставляется локально известное число лайков.
+- `Tuner playlists` — Familiar, Balance, Discovery with lifecycle status, configured/effective size, the content freshness date and the buttons Preview/Refresh content/Regenerate/Delete. Creating a playlist immediately fills it with the full selection — "publish" in the sense of "make public" does not exist (the playlists are private and are visible to the owner in YouTube Music immediately). The button is called `Refresh content` and means the one thing it does: rebuild the selection for the current taste and roll the difference onto the already live playlist. The card shows `Contents from <date>`, where creation counts as the first release: "Never published" right after creation hinted at unfinished work that does not exist. The set of actions depends on the state: ACTIVE — Refresh content/Delete playlist; UNVERIFIED, CLEANUP_REQUIRED and CREATING with a remote ID — Verify/adopt + Delete setup artifact; CREATING without a remote ID — Create on YouTube + Delete setup artifact. A deleted playlist disappears from the list (that is the confirmation of the deletion), and a button for creating the missing ones appears; the result of Verify/adopt is always shown in words, and a stuck setup by its own `setupErrorCode`. A playlist deleted on YouTube may remain in the "Your YouTube Music playlists" list until the next library sync — this is a cache;
+- `Your YouTube Music playlists` — read-only cards and the `Play in Tuner` action. The size is shown as is: YouTube does not report it for its system playlists, and such a card says "size not reported by YouTube", not "0 tracks". For Liked Music the locally known number of likes is substituted.
 
-### Preview — это просмотр, а не счётчик
+### Preview is a view, not a counter
 
-Preview раскрывает **сам список**: позиция, название, артист и метка `known`/`new`. Любую строку можно нажать и услышать её в обычном плеере, кнопка `Play` ставит весь список в очередь. Показанный список фиксируется, и `Publish now` пишет именно его; до открытия Preview кнопка публикации неактивна. `Regenerate` предлагает другой вариант.
+Preview reveals **the list itself**: position, title, artist and a `known`/`new` tag. Any row can be clicked to hear it in the regular player, and the `Play` button queues the whole list. The list shown is fixed, and `Publish now` writes exactly that list; until Preview has been opened, the publish button is inactive. `Regenerate` offers a different variant.
 
-Раньше здесь были только счётчики, то есть публикация выполнялась вслепую — это противоречило собственному обещанию «never touched without a preview».
+Previously there were only counters here, which meant publishing was done blind — this contradicted its own promise "never touched without a preview".
 
-Перед manual publish показываются additions/removals/moves, результаты playlist quality gates, target generation и оставшиеся item changes/HTTP requests при PARTIAL publication. Если target уменьшен из-за pool, UI явно пишет, например `42 of configured 60 · limited by 30 familiar tracks` и reason `TARGET_SIZE_REDUCED_FOR_POOL`. При `INSUFFICIENT_POOL` показываются required/available counts и действия: снизить температуру, уменьшить configured size или накопить больше likes/listens. Причина блокировки отображается отдельно, если quality, cooldown или API circuit не позволяют запись.
+Before a manual publish, the additions/removals/moves, the results of the playlist quality gates, the target generation and the remaining item changes/HTTP requests for a PARTIAL publication are shown. If the target has been reduced because of the pool, the UI says so explicitly, for example `42 of configured 60 · limited by 30 familiar tracks`, with the reason `TARGET_SIZE_REDUCED_FOR_POOL`. On `INSUFFICIENT_POOL` the required/available counts are shown together with the actions: lower the temperature, reduce the configured size, or accumulate more likes/listens. The blocking reason is displayed separately if quality, cooldown or the API circuit does not allow the write.
 
-CREATING/UNVERIFIED/CLEANUP_REQUIRED не маскируются под готовый playlist. Для них доступны `Verify/adopt` и подтверждённое удаление; обычные Publish/Restore недоступны до ACTIVE. Удаление доступно и для ACTIVE: это плейлист слушателя, и не понравившийся вариант должен убираться из приложения. В обоих случаях диалог показывает точный remote ID, а сервер заново сверяет ownership marker.
+CREATING/UNVERIFIED/CLEANUP_REQUIRED are not disguised as a ready playlist. `Verify/adopt` and confirmed deletion are available for them; regular Publish/Restore are unavailable until ACTIVE. Deletion is available for ACTIVE as well: it is the listener's playlist, and a variant they do not like must be removable from the application. In both cases the dialog shows the exact remote ID, and the server re-checks the ownership marker.
 
-Отказ на этапе создания показывается по каждому плейлисту отдельно и человеческим текстом. Отказ по quality gates возвращается обычным `200`, поэтому молчание UI здесь недопустимо: раньше нажатие «Create the three playlists» выглядело как полное отсутствие реакции.
+A refusal at the creation stage is shown for each playlist separately and in human-readable text. A refusal by the quality gates is returned as a regular `200`, so UI silence is unacceptable here: previously, pressing "Create the three playlists" looked like no reaction at all.
 
 ## 7. Insights
 
-Не превращать экран в ML-dashboard. По умолчанию показывать:
+Do not turn the screen into an ML dashboard. Show by default:
 
-- `Collecting signal 31/40 qualified tracks`, затем `Baseline 73/100 · model in shadow`, либо `Model active`; tooltip поясняет, что это прослушанные треки/явные реакции, а не запуски приложения;
-- изменение early skip и completion относительно baseline с sample size;
-- top positive/negative artists только по локальному поведению;
-- знакомое/новое за 7 и 30 дней;
-- последнюю/следующую автогенерацию;
-- `What Tuner learned` как детерминированные факты.
+- `Collecting signal 31/40 qualified tracks`, then `Baseline 73/100 · model in shadow`, or `Model active`; the tooltip explains that these are listened tracks/explicit reactions, not application launches;
+- the change in early skip and completion relative to the baseline, with sample size;
+- top positive/negative artists based only on local behaviour;
+- familiar/new over 7 and 30 days;
+- the last/next automatic generation;
+- `What Tuner learned` as deterministic facts.
 
-Панель `Discovery pool` показывает, из чего вообще собирается волна: число играбельных кандидатов, размер графа, распределение по расстоянию от избранного («N at 1 step, M at 2 steps») и процент повтора предыдущей волны. Это те две величины, ради которых существует граф: пул, который растёт, и волны, которые не повторяются.
+The `Discovery pool` panel shows what a wave is built from in the first place: the number of playable candidates, the size of the graph, the distribution by distance from the favourites ("N at 1 step, M at 2 steps") and the percentage of the previous wave that is repeated. These are the two quantities the graph exists for: a pool that grows, and waves that do not repeat.
 
-Расширенный диагностический drawer содержит model version, event counts, call ledger и расход дневного бюджета discovery-вызовов.
+The extended diagnostics drawer contains the model version, event counts, the call ledger and the consumption of the daily budget of discovery calls.
 
 ## 8. Settings
 
-Группы:
+Groups:
 
 - `YouTube Music`: account, OAuth status, reconnect, last sync;
 - `Automation`: auto-train, auto-publish, publish window, default temperature;
-- `Playback`: pause-when-hidden (по умолчанию **выключено** — решение владельца от 2026-08-01, см. docs/04 section 1), default temperature, volume, repeat default;
+- `Playback`: pause-when-hidden (**off** by default — the owner's decision of 2026-08-01, see docs/04 section 1), default temperature, volume, repeat default;
 - `Privacy`: event retention, export summary, delete telemetry, disconnect;
 - `Diagnostics`: health, database path/size, dependency version, circuit breaker, logs download without secrets.
 
-Опасные действия визуально отделены и требуют явного подтверждения с точным описанием последствий.
+Dangerous actions are visually separated and require explicit confirmation with an exact description of the consequences.
 
-## 9. Состояния
+## 9. States
 
-Каждый data screen имеет четыре явных состояния:
+Every data screen has four explicit states:
 
-- loading skeleton при первом локальном чтении;
-- empty state с единственным следующим действием;
-- stale-but-usable с временем последнего sync;
-- error с retry, который уважает cooldown.
+- loading skeleton on the first local read;
+- empty state with a single next action;
+- stale-but-usable, with the time of the last sync;
+- error with a retry that respects the cooldown.
 
-Если YouTube недоступен, существующая локальная очередь и Insights остаются доступны. Красный цвет используется только для ошибок и destructive actions, не для обычного dislike control.
+If YouTube is unavailable, the existing local queue and Insights remain available. Red is used only for errors and destructive actions, not for the ordinary dislike control.
 
-## 10. Доступность
+## 10. Accessibility
 
-- все controls доступны с клавиатуры;
+- all controls are keyboard accessible;
 - visible focus ring;
-- контраст WCAG AA для текста/контролов;
-- temperature доступна arrow keys и имеет `aria-valuetext`;
-- иконки имеют accessible labels;
-- состояние like/dislike не обозначается только цветом: активная оценка несёт заполненный глиф, рамку, `aria-pressed` и подпись статуса синхронизации (`syncing…`/`synced`/`not synced`);
-- каждое действие получает немедленный отклик: оптимистичное состояние кнопки, `:active`-обратная связь, `disabled` пока плеер не готов, индикатор `retuning…` при пересборке хвоста очереди;
-- операция, которая занимает заметное время (preview всего пула, create/publish/verify/delete с внешними вызовами), показывает индикатор прогресса с подписью, что именно происходит; замороженная кнопка без движения читается как зависание. Бар честно indeterminate: это одиночные HTTP-вызовы без промежуточных процентов;
-- анимации отключаются при `prefers-reduced-motion`;
-- hit target минимум 40×40 px.
+- WCAG AA contrast for text/controls;
+- temperature is operable with arrow keys and has `aria-valuetext`;
+- icons have accessible labels;
+- the like/dislike state is not conveyed by colour alone: an active rating carries a filled glyph, a border, `aria-pressed` and a sync status caption (`syncing…`/`synced`/`not synced`);
+- every action gets immediate feedback: an optimistic button state, `:active` feedback, `disabled` while the player is not ready, a `retuning…` indicator while the tail of the queue is being rebuilt;
+- an operation that takes noticeable time (preview of the whole pool, create/publish/verify/delete with external calls) shows a progress indicator with a caption saying what exactly is happening; a frozen button with no motion reads as a hang. The bar is honestly indeterminate: these are single HTTP calls with no intermediate percentages;
+- animations are disabled under `prefers-reduced-motion`;
+- hit target of at least 40×40 px.
 
-## 11. Тексты и тон
+## 11. Copy and tone
 
-Короткий, спокойный и честный интерфейс:
+A short, calm and honest interface:
 
-- `Learning from 31 qualified listens` вместо `AI is analyzing you`;
-- `YouTube Music sync paused — reconnect required` вместо общего `Something went wrong`;
-- `No negative signal recorded` при закрытии страницы;
-- `Playback paused because this tab is no longer visible` при policy-паузе;
-- для нового plan: `Next automatic publish after 21:00, if enough new listens`;
-- для незавершённого plan: `Continuing 9 remaining changes after 21:00 · no new listens required`.
+- `Learning from 31 qualified listens` instead of `AI is analyzing you`;
+- `YouTube Music sync paused — reconnect required` instead of a generic `Something went wrong`;
+- `No negative signal recorded` when the page is closed;
+- `Playback paused because this tab is no longer visible` on a policy pause;
+- for a new plan: `Next automatic publish after 21:00, if enough new listens`;
+- for an unfinished plan: `Continuing 9 remaining changes after 21:00 · no new listens required`.
 
-UI не обещает знать настроение пользователя и всегда показывает, когда контекст выбран вручную.
+The UI does not promise to know the user's mood and always shows when the context was chosen manually.

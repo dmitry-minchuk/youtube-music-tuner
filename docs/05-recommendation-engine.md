@@ -1,199 +1,199 @@
-# Рекомендательный движок
+# Recommendation engine
 
-## 1. Решение по AI
+## 1. AI decision
 
-Основной рекомендатель не использует LLM — ни внешнюю, ни локальную. Задача состоит не в генерации текста, а в online-ranking кандидатов по небольшому персональному потоку обратной связи. Для неё лучше подходят:
+The primary recommender does not use an LLM — neither an external nor a local one. The task is not text generation but online ranking of candidates from a small personal feedback stream. Better suited for it are:
 
-- рекомендательный граф YouTube Music для получения кандидатов;
-- локальные поведенческие признаки;
-- простой contextual bandit, обновляемый после каждой квалифицированной сессии;
-- детерминированные ограничения разнообразия, усталости и безопасности.
+- the YouTube Music recommendation graph for obtaining candidates;
+- local behavioural features;
+- a simple contextual bandit, updated after every qualified session;
+- deterministic diversity, fatigue and safety constraints.
 
-Это дешевле, приватнее, объяснимее и устойчивее на малом объёме данных, чем LLM. Подробное решение: [ADR-002](decisions/ADR-002-local-recommender-no-llm.md).
+This is cheaper, more private, more explainable and more robust on a small data volume than an LLM. Detailed decision: [ADR-002](decisions/ADR-002-local-recommender-no-llm.md).
 
-## 2. Архитектура рекомендации
+## 2. Recommendation architecture
 
 ```mermaid
 flowchart LR
-    S["Лайки и успешные сессии"] --> C["Candidate generation"]
-    Y["Related / Radio / Mood из кеша"] --> C
+    S["Likes and successful sessions"] --> C["Candidate generation"]
+    Y["Related / Radio / Mood from cache"] --> C
     C --> H["Hard filters"]
     H --> F["Feature builder"]
     T["Local telemetry aggregates"] --> F
     F --> B["Contextual bandit"]
     B --> D["Diversity reranker"]
     D --> Q["Wave queue"]
-    Q --> E["Новые события"]
+    Q --> E["New events"]
     E --> T
 ```
 
-Система разделяет четыре операции:
+The system separates four operations:
 
-1. собрать достаточно широкий candidate pool;
-2. отфильтровать недопустимое;
-3. оценить персональную полезность и неопределённость;
-4. сформировать последовательность без повторов и усталости.
+1. gather a sufficiently wide candidate pool;
+2. filter out what is inadmissible;
+3. estimate personal usefulness and uncertainty;
+4. form a sequence without repeats and fatigue.
 
 ## 3. Candidate generation
 
-### Источники
+### Sources
 
-- лайкнутые треки — для знакомой части;
-- сильные успешные сессии без explicit like;
+- liked tracks — for the familiar part;
+- strong successful sessions without an explicit like;
 - `get_song_related(seed)`;
-- radio queue из `get_watch_playlist(seed, radio=True)`;
-- кандидаты из ранее синхронизированных пользовательских плейлистов;
-- mood playlists только при выбранном контексте;
-- давно не звучавшие лайки для rediscovery.
+- radio queue from `get_watch_playlist(seed, radio=True)`;
+- candidates from previously synchronised user playlists;
+- mood playlists only when a context is selected;
+- likes that have not been played for a long time, for rediscovery.
 
-Открытие Wave не вызывает внешний запрос.
+Opening Wave makes no external request.
 
-### Граф кандидатов
+### Candidate graph
 
-Рёбра `seed → candidate` — это утверждение YouTube о похожести двух треков, то есть коллаборативный сигнал, посчитанный по миллионам слушателей. Для установки на одного пользователя это единственный доступный источник collaborative filtering, поэтому рёбра **накапливаются, а не кэшируются**: `expires_at` означает лишь «seed можно опросить заново», но само ребро остаётся в пуле. Retention удаляет только рёбра, не обновлявшиеся год (docs/07 §8).
+The `seed → candidate` edges are YouTube's statement that two tracks are similar, that is, a collaborative signal computed over millions of listeners. For a single-user installation this is the only available source of collaborative filtering, so edges are **accumulated, not cached**: `expires_at` only means "the seed may be queried again", but the edge itself stays in the pool. Retention deletes only edges that have not been refreshed for a year (docs/07 §8).
 
-Каждое ребро несёт `hop` — расстояние от positive root (лайк либо трек с сильной локальной наградой). Вклад кандидата дисконтируется как `0.72^(hop-1)`, максимальная глубина — 3 хопа.
+Each edge carries `hop` — the distance from a positive root (a like or a track with a strong local reward). A candidate's contribution is discounted as `0.72^(hop-1)`, the maximum depth is 3 hops.
 
-Кратность связей не схлопывается: кандидат, к которому ведут пять разных любимых треков, отличается от кандидата с одним ребром. Это co-occurrence — тот самый сигнал, из которого item-embedding методы учат похожесть, и у нас он доступен напрямую как in-degree от positive roots.
+The multiplicity of links is not collapsed: a candidate reached from five different favourite tracks differs from a candidate with a single edge. This is co-occurrence — the very signal from which item-embedding methods learn similarity, and here it is available directly as the in-degree from positive roots.
 
-### Выбор seed
+### Seed selection
 
-За один candidate refresh выбираются максимум 6 seed из positive roots (лайки **и** треки с сильной наградой, не только лайки):
+A single candidate refresh selects at most 6 seeds from positive roots (likes **and** tracks with a strong reward, not only likes):
 
-- 2 из высоко оценённых и давно не звучавших;
-- 2 из свежего успешного discovery;
-- 2 случайных из устойчивого positive cluster для сохранения разнообразия.
+- 2 from highly rated tracks that have not been played for a long time;
+- 2 from recent successful discovery;
+- 2 random ones from a stable positive cluster to preserve diversity.
 
-Один артист не может дать больше двух seed за run.
+A single artist cannot provide more than two seeds per run.
 
 ### Frontier expansion
 
-Раз в 6 часов job `graph_expand` расширяет границу графа: берёт до 12 ещё не раскрытых узлов и запрашивает их radio.
+Every 6 hours the `graph_expand` job expands the graph frontier: it takes up to 12 not-yet-expanded nodes and requests their radio.
 
-**Ширина прежде глубины.** Сначала раскрываются positive roots, от которых ещё ни разу не ходили, и только потом — кандидаты с наибольшей поддержкой. Причина в измеренном провале: жадный по поддержке обход углублял один кластер, и из 51 лайка сидами стали лишь 8 — сорок три любимых трека не были представлены в пуле вообще. Снаружи это ощущается как «во всех волнах одна и та же музыка», хотя формально треки не повторялись.
+**Breadth before depth.** Positive roots that have never been expanded from are expanded first, and only then the candidates with the most support. The reason is a measured failure: a support-greedy traversal deepened a single cluster, and out of 51 likes only 8 became seeds — forty-three favourite tracks were not represented in the pool at all. From the outside this feels like "the same music in every wave", even though formally no tracks repeated.
 
-Отдельно: лайк, на который не ссылается ничьё радио, вообще отсутствует в таблице поддержки, поэтому границу нужно строить из объединения корней и достижимых узлов, а не только из вторых.
+Separately: a like that no one's radio points to is absent from the support table altogether, so the frontier must be built from the union of roots and reachable nodes, not from the latter only.
 
-Radio выбран вместо related потому, что стоит один вызов и отдаёт до 25 кандидатов — лучшее отношение материала к вызову. Дизлайкнутые узлы и узлы с отрицательной decayed reward не раскрываются: тянуть похожее на нелюбимое бессмысленно. Когда граница исчерпана, переоткрываются самые давно не обновлявшиеся узлы.
+Radio was chosen over related because it costs one call and returns up to 25 candidates — the best ratio of material to calls. Disliked nodes and nodes with negative decayed reward are not expanded: pulling in things similar to what is disliked is pointless. When the frontier is exhausted, the nodes that have gone longest without a refresh are re-opened.
 
-Общий дневной потолок discovery-вызовов — 60 (docs/03 §9).
+The overall daily ceiling for discovery calls is 60 (docs/03 §9).
 
 ## 4. Hard filters
 
-До ML-score исключаются:
+Before the ML score the following are excluded:
 
-- explicit dislike или ручной block;
-- трек с локальным veto («Don't Like At All», см. §11) и **все не-лайкнутые треки veto-артистов**;
-- кандидат с высокой slop-оценкой (см. «Слоп-фильтр» ниже);
-- недоступный `videoId`;
-- трек с повторяющимися playback errors в течение 24 часов;
-- трек в окне недавних проигрываний (см. ниже), кроме repeat по явному запросу;
-- трек в skip-карантине;
-- metadata-only сущность без playable `videoId`;
-- candidate, исключённый пользователем из текущей очереди.
+- explicit dislike or manual block;
+- a track with a local veto ("Don't Like At All", see §11) and **all non-liked tracks of veto artists**;
+- a candidate with a high slop score (see "Slop filter" below);
+- an unavailable `videoId`;
+- a track with repeated playback errors within 24 hours;
+- a track in the recent-plays window (see below), except repeat on explicit request;
+- a track in skip quarantine;
+- a metadata-only entity without a playable `videoId`;
+- a candidate excluded by the user from the current queue.
 
-Explicit dislike имеет приоритет над любым score и не истекает сам. Veto — тоже: это локальный сигнал, который никогда не синхронизируется в YouTube.
+Explicit dislike takes priority over any score and does not expire on its own. So does veto: it is a local signal that is never synchronised to YouTube.
 
-### Слоп-фильтр
+### Slop filter
 
-Радио и related YouTube затаскивают в граф массово сгенерированный контент («ИИ-слоп»): однотипные треки с генеративными обложками, хештегами в названии и фермерскими каналами. Локальная эвристика по метаданным — без внешних вызовов и без LLM (ADR-002) — начисляет slop-очки за: «AI»/«A.I.»/«prompt»/«suno»/«udio» в имени артиста; «type beat»; два и более хештега в названии; фоновые формулы («lounge music», «for relaxation/study/sleep», «no copyright», «royalty free»); эмодзи; жанровый хвост после «|»; сверхдлинное название.
+YouTube's radio and related pull mass-generated content ("AI slop") into the graph: uniform tracks with generated covers, hashtags in the title and farm channels. A local metadata heuristic — with no external calls and no LLM (ADR-002) — awards slop points for: "AI"/"A.I."/"prompt"/"suno"/"udio" in the artist name; "type beat"; two or more hashtags in the title; background formulas ("lounge music", "for relaxation/study/sleep", "no copyright", "royalty free"); emoji; a genre tail after "|"; an extra-long title.
 
-Оценка ≥ 3 исключает кандидата из пула; ровно 2 — штраф −0.6 к скору. Эвристика применяется ко всем трекам **включая лайкнутые** — по прямому решению владельца (2026-08-09) слоп ловится однозначно, и случайный лайк не спасает трек от исключения. Снятие такого лайка в YouTube не происходит автоматически: un-like — явное действие (разовая чистка выполняется по запросу), автоматическим является только исключение из выдачи. Калибровка на живой базе 8.5к треков (2026-08-09): 28 исключены, 53 оштрафованы; единственный flagged-лайк оказался ИИ-треком и вычищен. Эвристика — сеть с крупной ячейкой; то, что просочилось, добивается кнопкой «Not my thing», которая выносит артиста целиком.
+A score ≥ 3 excludes the candidate from the pool; exactly 2 gives a −0.6 penalty to the score. The heuristic applies to all tracks **including liked ones** — by the owner's direct decision (2026-08-09) slop is caught unambiguously, and an accidental like does not save a track from exclusion. Removing such a like in YouTube does not happen automatically: un-like is an explicit action (a one-off cleanup is performed on request); only the exclusion from results is automatic. Calibration on a live database of 8.5k tracks (2026-08-09): 28 excluded, 53 penalised; the only flagged like turned out to be an AI track and was cleaned out. The heuristic is a coarse filter; whatever slips through is finished off with the "Not my thing" button, which removes the artist entirely.
 
-### Фермо-детекция артистов
+### Artist farm detection
 
-Ферма выдаёт себя поведением: один «артист», десятки треков по одному шаблону, слоп-маркеры на большинстве. После каждого обновления графа (candidate refresh, graph expand) детектор смотрит на каталог артиста целиком и ставит **авто-veto всему артисту** (`source=FARM_AUTO`), когда выполняется любое из:
+A farm gives itself away by its behaviour: a single "artist", dozens of tracks from one template, slop markers on most of them. After each graph update (candidate refresh, graph expand) the detector looks at the artist's whole catalogue and sets an **auto-veto on the whole artist** (`source=FARM_AUTO`) when any of the following holds:
 
-- ≥ 3 треков с оценкой исключения (ферма Gazzarin: 11 треков по 5 очков);
-- ≥ 5 треков со слоп-маркерами (канал с «A.I.» в имени метит каждую загрузку);
-- ≥ 4 треков, названия которых — один заполненный шаблон (средняя парная близость нормализованных названий ≥ 0.6), и хотя бы один трек со слоп-маркером. Шаблонность **сама по себе никогда не действует** — серия «Symphony No. N» живого артиста не пострадает.
+- ≥ 3 tracks with an exclusion score (the Gazzarin farm: 11 tracks with 5 points each);
+- ≥ 5 tracks with slop markers (a channel with "A.I." in its name flags every upload);
+- ≥ 4 tracks whose titles are one filled-in template (mean pairwise similarity of normalised titles ≥ 0.6), and at least one track with a slop marker. Template similarity **never acts on its own** — a "Symphony No. N" series by a living artist will not be affected.
 
-Человек всегда важнее детектора: артист с хотя бы одним лайкнутым треком неприкосновенен, а снятое пользователем авто-veto сохраняется как инертная запись `OVERRIDDEN` — детектор никогда не переспорит явное человеческое решение. Ручное veto кнопкой — `source=MANUAL`.
+A human always outranks the detector: an artist with at least one liked track is untouchable, and an auto-veto removed by the user is kept as an inert `OVERRIDDEN` record — the detector never overrides an explicit human decision. A manual veto via the button is `source=MANUAL`.
 
-### Окно недавних проигрываний
+### Recent-plays window
 
-Фиксированные 30 позиций были рассчитаны на пул в пару сотен треков; с растущим графом такое окно почти ничего не скрывает. Окно масштабируется: 35% размера пула, но не меньше 30, не больше 400 и никогда не больше половины пула.
+The fixed 30 positions were sized for a pool of a couple of hundred tracks; with a growing graph such a window hides almost nothing. The window scales: 35% of the pool size, but no less than 30, no more than 400 and never more than half the pool.
 
-Окно двухскоростное. Для discovery применяется полная ширина. Для знакомого — короткое окно (не более 15 позиций и не более трети играбельных фаворитов): услышать любимый трек снова через неделю и есть смысл familiar-квоты, а широкое окно просто опустошает знакомую часть волны.
+The window is two-speed. For discovery the full width applies. For familiar tracks it is a short window (no more than 15 positions and no more than a third of the playable favourites): hearing a favourite track again after a week is the very point of the familiar quota, while a wide window simply empties the familiar part of the wave.
 
-### Skip-карантин
+### Skip quarantine
 
-Повторные пропуски выводят трек из ротации: два пропуска — на неделю, три и более — на месяц. Трек, который хотя бы раз был дослушан до конца, получает одну «поблажку» — пропуск мог означать «не сейчас». Лайкнутые треки не карантинятся никогда: explicit like перевешивает любое число пропусков.
+Repeated skips take a track out of rotation: two skips — for a week, three or more — for a month. A track that has been listened to the end at least once gets one "grace" — a skip may have meant "not now". Liked tracks are never quarantined: an explicit like outweighs any number of skips.
 
-Hard filters отвечают только за недопустимость конкретного трека. Ограничения повторения артиста/альбома относятся исключительно к sequence-level diversity reranker из §11, поэтому правило не дублируется в двух слоях.
+Hard filters are responsible only for the inadmissibility of a specific track. Artist/album repetition constraints belong exclusively to the sequence-level diversity reranker from §11, so the rule is not duplicated in two layers.
 
-## 5. Признаки
+## 5. Features
 
-Каждая пара `(candidate, current_context)` превращается в нормализованный vector `x`.
+Each `(candidate, current_context)` pair is turned into a normalised vector `x`.
 
-### Персональная близость
+### Personal affinity
 
-- candidate уже liked;
-- affinity к артисту и альбому;
-- средний reward связанных seed;
-- число независимых seed, приведших к candidate;
-- лучшая/средняя позиция в related/radio source;
-- похожесть на последние 5 успешных треков по artist/album/source graph.
+- the candidate is already liked;
+- affinity for the artist and album;
+- mean reward of the related seeds;
+- number of independent seeds that led to the candidate;
+- best/mean position in the related/radio source;
+- similarity to the last 5 successful tracks by artist/album/source graph.
 
-### Новизна и усталость
+### Novelty and fatigue
 
-- candidate никогда не проигрывался;
-- дни с последнего проигрывания;
-- количество проигрываний за 1/7/30 дней;
-- artist exposure за 1/7 дней;
-- был ли ранний skip недавно;
-- был ли successful rediscovery после долгого перерыва.
+- the candidate has never been played;
+- days since last play;
+- number of plays over 1/7/30 days;
+- artist exposure over 1/7 days;
+- whether there was an early skip recently;
+- whether there was a successful rediscovery after a long break.
 
-### Контекст
+### Context
 
-- выбранный mood/activity;
-- локальный час и день недели — только после явного opt-in;
-- текущая температура;
-- средний reward последних 5 сессий;
-- смена контекста пользователем во время очереди.
+- selected mood/activity;
+- local hour and day of week — only after an explicit opt-in;
+- current temperature;
+- mean reward of the last 5 sessions;
+- the user changing the context during the queue.
 
-### Качество данных
+### Data quality
 
-- есть ли duration;
-- число наблюдений артиста/трека;
-- источник сигнала: local telemetry, explicit rating, remote history;
+- whether a duration is present;
+- number of artist/track observations;
+- signal source: local telemetry, explicit rating, remote history;
 - confidence aggregate.
 
-На первом этапе не используются аудиоэмбеддинги, тексты песен и персональные данные вне приложения.
+In the first stage audio embeddings, song lyrics and personal data from outside the application are not used.
 
 ## 6. Reward
 
-Сначала действия переводятся в сырой reward, затем нелинейно нормализуются в диапазон `(-1, 1)` без схлопывания разных сигналов.
+Actions are first converted into a raw reward, then nonlinearly normalised into the range `(-1, 1)` without collapsing different signals.
 
-| Сигнал | Сырой вес |
+| Signal | Raw weight |
 | --- | ---: |
 | explicit like | +5 |
-| explicit dislike | -8 и hard block |
-| replay в течение 10 минут | +3 |
-| естественный end или ≥90% фактического проигрывания | +2 |
-| 60–90% без completion и explicit next | +1 |
-| seek backward | +0.5, максимум +1 за сессию |
-| explicit next до 20% | -3 |
-| explicit next на 20–60% | -1 |
-| explicit next до 30 секунд при неизвестной duration | -2 |
-| explicit next на 30–120 секундах при неизвестной duration | -0.5 |
-| 10–60% без явного next | 0 |
+| explicit dislike | -8 and hard block |
+| replay within 10 minutes | +3 |
+| natural end or ≥90% of actual playback | +2 |
+| 60–90% without completion and explicit next | +1 |
+| seek backward | +0.5, maximum +1 per session |
+| explicit next before 20% | -3 |
+| explicit next at 20–60% | -1 |
+| explicit next before 30 seconds with unknown duration | -2 |
+| explicit next at 30–120 seconds with unknown duration | -0.5 |
+| 10–60% without explicit next | 0 |
 | pause/buffer/error/page close | 0 |
-| запись из remote history | +0.15 к recency, не к вкусовому reward |
+| record from remote history | +0.15 to recency, not to taste reward |
 
-Формула `reward-v1`:
+The `reward-v1` formula:
 
-1. Сложить применимые implicit weights; completion `+2` имеет приоритет над partial-listen `+1`, поэтому они никогда не суммируются. Partial-listen применяется только при `NOT completed AND 0.60 <= played_ratio < 0.90 AND NOT explicit_next`. Replay и seek-back могут добавляться независимо, contribution seek-back ограничен `+1`. Получившийся `implicit_raw` ограничить достижимым диапазоном `[-3, 6]`.
-2. При explicit dislike установить `raw=-8` независимо от implicit signals и применить hard block.
-3. При explicit like установить `raw=5 + clamp(implicit_raw, 0, 2)`: отрицательное не отменяет явную оценку, но completion/replay сохраняют дополнительный градиент.
-4. Без explicit rating использовать `raw=implicit_raw`.
-5. Нормализовать: `reward = tanh(raw / 4)`.
+1. Sum the applicable implicit weights; completion `+2` takes priority over partial-listen `+1`, so they are never summed. Partial-listen applies only when `NOT completed AND 0.60 <= played_ratio < 0.90 AND NOT explicit_next`. Replay and seek-back may be added independently, the seek-back contribution is capped at `+1`. Clamp the resulting `implicit_raw` to the reachable range `[-3, 6]`.
+2. On explicit dislike set `raw=-8` regardless of implicit signals and apply a hard block.
+3. On explicit like set `raw=5 + clamp(implicit_raw, 0, 2)`: a negative does not cancel the explicit rating, but completion/replay preserve an additional gradient.
+4. Without an explicit rating use `raw=implicit_raw`.
+5. Normalise: `reward = tanh(raw / 4)`.
 
-Примеры: completion `tanh(0.5) ≈ 0.462`, replay без completion `≈ 0.635`, early skip `≈ -0.635`, like без других сигналов `≈ 0.848`, dislike `≈ -0.964`. Таким образом like, replay и completion не становятся одинаковым `+1`. Версия формулы хранится как `reward_version`; тесты фиксируют значения с tolerance `1e-3`.
+Examples: completion `tanh(0.5) ≈ 0.462`, replay without completion `≈ 0.635`, early skip `≈ -0.635`, like with no other signals `≈ 0.848`, dislike `≈ -0.964`. Thus like, replay and completion do not all become the same `+1`. The formula version is stored as `reward_version`; tests pin the values with tolerance `1e-3`.
 
 ## 7. Cold start
 
-До достаточного количества локальной телеметрии применяется rule-based score:
+Until enough local telemetry has accumulated, a rule-based score is used:
 
 ```text
 0.35 * source_strength
@@ -205,28 +205,28 @@ Hard filters отвечают только за недопустимость к�
 - recent_skip_penalty
 ```
 
-Уточнения к входным компонентам, без которых шкала съезжает:
+Clarifications to the input components, without which the scale drifts:
 
-- `source_strength` умножается на `hop_discount(hop)` — дальний кандидат слабее близкого. К лайку это **не** применяется: лайк является корнем графа, а не кандидатом на расстоянии, и появление его в чужом radio не должно его обесценивать;
-- `seed_affinity` строится на позиции в выдаче источника, а поддержка нескольких избранных seed добавляется множителем `1 + 0.5 * support_score`, не заменяя её. Замена ранга поддержкой сдвинула всю шкалу вниз, и порог `quality_expected >= -0.20` перестал проходить почти для всех;
-- `fatigue_penalty` и `recent_skip_penalty` для явных лайков берутся с коэффициентом 0.35: лайк — это просьба играть трек чаще, а его пропуск обычно означает «не сейчас», а не «не этот трек». В полную силу эти два штрафа топили большинство избранного ниже порога публикации.
+- `source_strength` is multiplied by `hop_discount(hop)` — a distant candidate is weaker than a near one. This is **not** applied to a like: a like is a graph root, not a candidate at a distance, and its appearance in someone else's radio must not devalue it;
+- `seed_affinity` is built on the position in the source's results, and support from several favourite seeds is added as a multiplier `1 + 0.5 * support_score`, without replacing it. Replacing the rank with support shifted the whole scale down, and the `quality_expected >= -0.20` threshold stopped passing for almost everything;
+- `fatigue_penalty` and `recent_skip_penalty` are taken with a coefficient of 0.35 for explicit likes: a like is a request to play the track more often, and skipping it usually means "not now", not "not this track". At full strength these two penalties sank most of the favourites below the publication threshold.
 
-Все входные компоненты нормализованы, а результат формулы сохраняется как `rule_score=clamp(weighted_sum, 0, 1)`. Для общего диапазона playlist gate применяется монотонное преобразование `quality_expected = 2 * rule_score - 1`. Это технический mapping, а не статистическая калибровка rule score к reward или LinUCB. При ACTIVE LinUCB используется его exploitation component `quality_expected=clamp(theta^T x, -1, 1)` без exploration bonus. Таким образом initial create, manual publish и baseline/SHADOW проходят gate `quality_expected >= -0.20`; до ACTIVE это буквально эквивалентно `rule_score >= 0.40`, а специального обхода gate нет. Межполитиковое comparative-mean сравнение запрещено. Generation сохраняет `quality_score_source=RULE_MAPPED|LINUCB_EXPECTED`.
+All input components are normalised, and the formula result is stored as `rule_score=clamp(weighted_sum, 0, 1)`. To put the playlist gate on one common scale, the monotonic transformation `quality_expected = 2 * rule_score - 1` is applied. This is a technical mapping, not a statistical calibration of the rule score to reward or LinUCB. With ACTIVE LinUCB, its exploitation component `quality_expected=clamp(theta^T x, -1, 1)` is used, without the exploration bonus. Thus initial create, manual publish and baseline/SHADOW pass through the gate `quality_expected >= -0.20`; before ACTIVE this is literally equivalent to `rule_score >= 0.40`, and there is no special gate bypass. Comparing comparative means across different policies is forbidden. The generation stores `quality_score_source=RULE_MAPPED|LINUCB_EXPECTED`.
 
-Shadow-обучение contextual bandit включается, когда накоплено одновременно:
+Shadow training of the contextual bandit is enabled when all of the following have accumulated simultaneously:
 
-- минимум 40 квалифицированных playback sessions;
-- минимум 20 разных треков;
-- минимум 12 положительных сессий;
-- минимум 8 отрицательных/явно пропущенных сессий.
+- at least 40 qualified playback sessions;
+- at least 20 distinct tracks;
+- at least 12 positive sessions;
+- at least 8 negative/explicitly skipped sessions.
 
-Первые 100 квалифицированных сессий всегда выбираются зафиксированным `rule-score-v1`, чтобы baseline оставался чистым. При достижении четырёх порогов выше LinUCB строит первый snapshot на всех доступных feature/session pairs и далее обновляется в статусе SHADOW: считает альтернативный порядок и метрики, но не влияет на очередь.
+The first 100 qualified sessions are always chosen by the frozen `rule-score-v1`, so that the baseline stays clean. When the four thresholds above are reached, LinUCB builds the first snapshot on all available feature/session pairs and is then updated in SHADOW status: it computes an alternative ordering and metrics but does not influence the queue.
 
-До выполнения всех четырёх порогов UI показывает отдельный прогресс, например `40 sessions · 6/8 negative signals`. После выполнения — `Baseline N/100 · model in shadow`. Только после 100-й сессии и прохождения model safety gates snapshot становится ACTIVE; если label-balance пороги или gates не пройдены, rule-based ranker остаётся serving policy, а новый snapshot остаётся REJECTED/SHADOW до следующей проверки.
+Until all four thresholds are met, the UI shows separate progress, for example `40 sessions · 6/8 negative signals`. After they are met — `Baseline N/100 · model in shadow`. Only after the 100th session and passing the model safety gates does the snapshot become ACTIVE; if the label-balance thresholds or gates are not passed, the rule-based ranker remains the serving policy, and the new snapshot stays REJECTED/SHADOW until the next check.
 
 ## 8. Contextual bandit
 
-Первая реализация — shared linear UCB (LinUCB) на NumPy. Для feature vector `x`:
+The first implementation is a shared linear UCB (LinUCB) on NumPy. For feature vector `x`:
 
 ```text
 theta = inverse(A) * b
@@ -235,41 +235,41 @@ uncertainty = sqrt(xᵀ inverse(A) x)
 ucb_score = expected + alpha(temperature) * uncertainty
 ```
 
-После квалифицированной сессии:
+After a qualified session:
 
 ```text
 A := A + x*xᵀ
 b := b + reward*x
 ```
 
-Матрица имеет L2 regularization и небольшое фиксированное число признаков, поэтому локальный расчёт занимает миллисекунды. Snapshot хранит `A`, `b`, feature schema version, training watermark и offline metrics.
+The matrix has L2 regularization and a small fixed number of features, so the local computation takes milliseconds. A snapshot stores `A`, `b`, feature schema version, training watermark and offline metrics.
 
-Почему не нейросеть: данных одного пользователя мало, целевая функция меняется, а LinUCB даёт встроенную оценку неопределённости и понятное управление exploration.
+Why not a neural network: a single user's data is scarce, the objective function changes, while LinUCB provides a built-in uncertainty estimate and understandable control of exploration.
 
-## 9. Температура
+## 9. Temperature
 
-Температура 0–100 не просто меняет случайность: она управляет долей знакомого, exploration bonus и допустимым расстоянием от seed.
+Temperature 0–100 does not merely change randomness: it controls the familiar share, the exploration bonus and the permitted distance from the seed.
 
-| Диапазон | Familiar quota | Discovery quota | Exploration `alpha` | Поведение |
+| Range | Familiar quota | Discovery quota | Exploration `alpha` | Behaviour |
 | --- | ---: | ---: | ---: | --- |
-| 0–25 | 80% | 20% | 0.10–0.25 | лайки, проверенные артисты, rediscovery |
-| 26–60 | 55% | 45% | 0.25–0.60 | баланс знакомого и нового |
-| 61–85 | 30% | 70% | 0.60–1.00 | новые артисты и менее очевидные edges |
-| 86–100 | 15% | 85% | 1.00–1.30 | широкое исследование с quality floor |
+| 0–25 | 80% | 20% | 0.10–0.25 | likes, proven artists, rediscovery |
+| 26–60 | 55% | 45% | 0.25–0.60 | balance of familiar and new |
+| 61–85 | 30% | 70% | 0.60–1.00 | new artists and less obvious edges |
+| 86–100 | 15% | 85% | 1.00–1.30 | broad exploration with a quality floor |
 
-После UCB score применяется softmax sampling; его математическая температура также растёт, но hard filters и минимальный quality floor сохраняются. Эффект регулятора должен быть заметен уже в первых десяти треках.
+After the UCB score, softmax sampling is applied; its mathematical temperature also grows, but hard filters and the minimum quality floor remain. The effect of the control must be noticeable already within the first ten tracks.
 
-Quotas являются целью, а не причиной нарушать hard filters. Если familiar bucket не может заполнить квоту из-за окна новизны, карантина или блокировок, недостающие позиции переходят к discovery-кандидатам с максимальным exploitation score; ответ возвращает фактический mix и reason code `FAMILIAR_POOL_WIDENED`. Recent-track filter не ослабляется автоматически. Если всего eligible candidates меньше требуемой длины, возвращается более короткая очередь и ставится один candidate-refresh job с обычным cooldown.
+Quotas are a target, not a reason to violate hard filters. If the familiar bucket cannot fill its quota because of the novelty window, quarantine or blocks, the missing positions go to the discovery candidates with the maximum exploitation score; the response returns the actual mix and reason code `FAMILIAR_POOL_WIDENED`. The recent-track filter is not relaxed automatically. If the total number of eligible candidates is less than the required length, a shorter queue is returned and one candidate-refresh job is scheduled with the usual cooldown.
 
-Квота двусторонняя. Скоры знакомых треков систематически выше discovery-кандидатов, поэтому мягкого бонуса недостаточно: без явного потолка волна прижимается к известному независимо от положения регулятора. Перебор familiar сверх цели допустим только когда admissible discovery-кандидаты исчерпаны — включая заблокированных diversity-ограничениями, — и такой перелив помечается reason code `DISCOVERY_POOL_WIDENED`. Молчаливое превышение familiar-доли — дефект.
+The quota is two-sided. Scores of familiar tracks are systematically higher than those of discovery candidates, so a soft bonus is not enough: without an explicit ceiling the wave is pulled toward the known regardless of the position of the control. Exceeding familiar above the target is allowed only when admissible discovery candidates are exhausted — including those blocked by diversity constraints — and such an overflow is marked with reason code `DISCOVERY_POOL_WIDENED`. A silent excess of the familiar share is a defect.
 
-Отдельно от нехватки материала действует ограничение ротации из §11: волна не забирает больше 75% (холодная) — 50% (горячая) доступных знакомых треков, даже когда квота просит больше. Такой недобор помечается кодом `FAMILIAR_ROTATION_CAP` и является намеренным: иначе следующей волне нечем отличаться.
+Separately from a shortage of material, the rotation limit from §11 applies: a wave does not take more than 75% (cold) — 50% (hot) of the available familiar tracks, even when the quota asks for more. Such a shortfall is marked with the code `FAMILIAR_ROTATION_CAP` and is intentional: otherwise the next wave would have nothing to differ by.
 
-Знакомая сторона волны состоит из лайков, треков с сохранённым сильным положительным сигналом (reward ≥ 0.4) и «тёплых» треков: сыгранных хотя бы раз, с положительной decayed reward (≥ 0.15) и звучавших в последние 60 дней. Тепло — свойство недавнего опыта: единственная сессия полугодовой давности не делает трек знакомым навечно, потому что взвешенное среднее одной наблюдённой награды не затухает по построению. После 60 дней тишины трек возвращается на discovery-сторону и становится кандидатом rediscovery.
+The familiar side of the wave consists of likes, tracks with a stored strong positive signal (reward ≥ 0.4) and "warm" tracks: played at least once, with positive decayed reward (≥ 0.15) and played within the last 60 days. Warmth is a property of recent experience: a single session from half a year ago does not make a track familiar forever, because the weighted mean of one observed reward does not decay by construction. After 60 days of silence the track returns to the discovery side and becomes a rediscovery candidate.
 
-## 10. Настроение и занятие
+## 10. Mood and activity
 
-Mood — отдельная ось, не синоним температуры. V1 предлагает:
+Mood is a separate axis, not a synonym of temperature. V1 offers:
 
 - `Any`;
 - `Focus`;
@@ -278,17 +278,17 @@ Mood — отдельная ось, не синоним температуры. 
 - `Background`;
 - `Rediscover`.
 
-На старте mood использует membership кандидатов в mood playlists YouTube Music и поведенческую историю именно в этом контексте. Пользователь выбирает контекст явно; приложение не пытается угадывать эмоции камерой, микрофоном или LLM.
+Initially, mood uses candidates' membership in YouTube Music mood playlists and behavioural history specifically in that context. The user selects the context explicitly; the application does not try to guess emotions with a camera, a microphone or an LLM.
 
-`Background` здесь означает ненавязчивый музыкальный характер при открытой видимой вкладке, а не разрешение background playback; policy-пауза при hidden действует во всех mood.
+`Background` here means an unobtrusive musical character with an open, visible tab, not permission for background playback; the policy pause when hidden applies in all moods.
 
-Если pool для mood слишком мал, фильтр становится soft boost, а UI показывает `context widened`; очередь не зацикливается.
+If the pool for a mood is too small, the filter becomes a soft boost and the UI shows `context widened`; the queue is not looped.
 
-Фактическое состояние v1: mood-плейлисты YouTube Music ещё не выкачиваются, поэтому у контекстов `Focus`, `Energy`, `Calm` и `Background` нет данных для фильтра — они не меняют отбор и всегда возвращают reason code `CONTEXT_WIDENED`. `Rediscover` работает от локальных данных уже сейчас: жёсткий фильтр к трекам, не звучавшим не меньше 60 дней (`last_played_at` из track affinity); когда таких треков меньше длины волны, фильтр деградирует до soft boost с тем же кодом `CONTEXT_WIDENED`. Контекст, который не может повлиять на выдачу, обязан сообщить об этом кодом, а не изображать фильтрацию.
+Actual state of v1: YouTube Music mood playlists are not yet fetched, so the contexts `Focus`, `Energy`, `Calm` and `Background` have no data for the filter — they do not change the selection and always return reason code `CONTEXT_WIDENED`. `Rediscover` already works from local data: a hard filter on tracks not played for at least 60 days (`last_played_at` from track affinity); when there are fewer such tracks than the wave length, the filter degrades to a soft boost with the same code `CONTEXT_WIDENED`. A context that cannot influence the results must report this with a code instead of pretending to filter.
 
 ## 11. Diversity reranking
 
-Bandit оценивает отдельные треки, но музыка слушается последовательностью. Финальный reranker выбирает следующий элемент по:
+The bandit scores individual tracks, but music is listened to as a sequence. The final reranker chooses the next item by:
 
 ```text
 final = model_score
@@ -300,134 +300,134 @@ final = model_score
       + familiarity_quota_pressure
 ```
 
-Штрафы считаются в окне последних 8 выбранных треков, а не по всему префиксу — так работают windowed DPP-реранкеры в продуктовых лентах (окно 6–12).
+Penalties are computed over a window of the last 8 selected tracks, not over the whole prefix — this is how windowed DPP rerankers work in product feeds (window 6–12).
 
-**Отбор стохастический.** Следующий трек не берётся argmax'ом, а сэмплируется из 12 лидеров по softmax; мягкость растёт с температурой. Без этого неизменившийся пул воспроизводил бы одну и ту же волну — главный источник ощущения «всё то же самое». Сэмплирование засеяно `random_seed` генерации, поэтому очередь остаётся воспроизводимой при том же состоянии базы.
+**Selection is stochastic.** The next track is not taken by argmax but sampled from the 12 leaders by softmax; softness grows with temperature. Without this, an unchanged pool would reproduce the same wave — the main source of the feeling "it's all the same". Sampling is seeded with the generation's `random_seed`, so the queue stays reproducible given the same database state.
 
-**Квота знакомого — цель, а не тай-брейкер.** Давление растёт по мере расходования слотов; если все оставшиеся слоты «должны» знакомому, выбор ограничивается знакомыми. Калибровка симметрична: как только квота выполнена, familiar-кандидаты выбывают из выбора, пока остаётся хотя бы один admissible discovery-кандидат, а вынужденный перебор помечается `DISCOVERY_POOL_WIDENED`. Это калибровка состава ленты, а не надежда на то, что скоры сойдутся. Тот же потолок предохраняет ограничение ротации: `effective_target` — одновременно цель и верхняя граница набора знакомого.
+**The familiar quota is a target, not a tie-breaker.** The pressure grows as slots are spent; if all the remaining slots "belong" to familiar, the choice is restricted to familiar tracks. The calibration is symmetric: once the quota is met, familiar candidates drop out of the choice as long as at least one admissible discovery candidate remains, and a forced overshoot is marked `DISCOVERY_POOL_WIDENED`. This is calibration of the feed's composition, not a hope that the scores will converge. The same ceiling protects the rotation limit: `effective_target` is both the target and the upper bound of the familiar selection.
 
-**Ротация важнее квоты.** Волна не берёт больше 75% (холодная) — 50% (горячая) доступных знакомых треков. Иначе следующей волне нечем отличаться: при 18 играбельных фаворитах и квоте 55% выборка «всех знакомых» давала 45% пересечения между волнами. Недобор квоты по этой причине отмечается кодом `FAMILIAR_ROTATION_CAP`.
+**Rotation outranks the quota.** A wave does not take more than 75% (cold) — 50% (hot) of the available familiar tracks. Otherwise the next wave has nothing to differ by: with 18 playable favourites and a 55% quota, picking "all the familiar ones" gave 45% overlap between waves. A quota shortfall for this reason is marked with the code `FAMILIAR_ROTATION_CAP`.
 
-**Память о прошлых волнах.** Помнятся 4 последние генерации. Discovery-треки предыдущей волны исключаются жёстко, пока пул это позволяет, и штрафуются, когда нет. Для знакомых шкала штрафов на порядок мягче: горстка лайков не может заполнить четыре волны без повторов, а повтор любимого — не то, на что жалуются.
+**Memory of past waves.** The last 4 generations are remembered. Discovery tracks of the previous wave are excluded hard while the pool allows it, and penalised when it does not. For familiar tracks the penalty scale is an order of magnitude softer: a handful of likes cannot fill four waves without repeats, and a repeat of a favourite is not something people complain about.
 
-**Память на уровне артистов.** Избегать повторных треков недостаточно: при большом пуле ранжирование всё равно сходилось к одним и тем же ~80 артистам. Артисты недавних волн получают отдельный штраф, лайки из него исключены. Окно стохастического отбора тоже растёт с размером пула — выбор из фиксированных 12 лидеров среди двух тысяч кандидатов сходится к той же горстке независимо от размера графа.
+**Artist-level memory.** Avoiding repeated tracks is not enough: with a large pool the ranking still converged on the same ~80 artists. Artists from recent waves get a separate penalty; likes are excluded from it. The stochastic selection window also grows with the pool size — choosing from a fixed 12 leaders among two thousand candidates converges to the same handful regardless of graph size.
 
-**Отрицательная история артиста наказывает подбор.** Раньше отрицательная artist affinity обрезалась в ноль — артист, которого слушатель стабильно скипает, был неотличим от неизвестного. Теперь кандидат не-лайк получает штраф `0.6 × max(0, −decayed_reward) × min(1, plays_all/3)` от своего основного артиста. Множитель уверенности обязателен: decayed reward одного наблюдения не затухает по построению, и без него один случайный скип (≈ −0.635) карал бы артиста навечно на одной точке данных. Один скип — лёгкий толчок вниз (≈ −0.13), три подтверждённо плохих сессии — полновесная стена (до −0.6). Штраф применяется после model score, как и остальные пост-штрафы, и не трогает замороженную rule-policy и `quality_expected`.
+**An artist's negative history penalises selection.** Previously, negative artist affinity was clipped to zero — an artist whom the listener consistently skips was indistinguishable from an unknown one. Now a non-liked candidate gets a penalty `0.6 × max(0, −decayed_reward) × min(1, plays_all/3)` from its primary artist. The confidence multiplier is mandatory: the decayed reward of a single observation does not decay by construction, and without it one accidental skip (≈ −0.635) would punish the artist forever on a single data point. One skip is a light nudge down (≈ −0.13), three confirmed bad sessions are a full wall (up to −0.6). The penalty is applied after the model score, like the other post-penalties, and does not touch the frozen rule-policy and `quality_expected`.
 
-**Явный сильный негатив — «Don't Like At All» (veto).** Локальная per-track кнопка для случая «это совсем не моё»: сам трек навсегда выбывает из пула, и **все не-лайкнутые треки его основного артиста исключаются вместе с ним** — из волн и из публикаций одинаково. Первоначальная версия ограничивалась штрафом −0.8, но против массового сгенерированного контента штрафа недостаточно: при тонком discovery-пуле оштрафованный трек всё равно всплывал, а владельцу нужен был «максимальный штраф, чтобы больше не появлялись» (2026-08-09). Единственное, что переживает veto артиста, — треки с explicit like: явный вкус важнее. Кандидаты, достижимые по рёбрам из veto-трека, получают −0.35; seed-вес veto-трека в графе равен нулю, и обход графа не раскрывает veto-узлы. Нажатие кнопки записывает telemetry-событие `veto_set` на реальной сессии (эквивалент explicit dislike для обучения); снятие veto удаляет строку и возвращает артиста, но не переписывает историю сессий. Veto никогда не синхронизируется в YouTube: рёбра графа приходят из позитивных seed'ов, и YT-дизлайк почти не изменил бы наш пул, оставаясь при этом видимым и полунеобратимым состоянием аккаунта.
+**Explicit strong negative — "Don't Like At All" (veto).** A local per-track button for the case "this is not my thing at all": the track itself permanently drops out of the pool, and **all non-liked tracks of its primary artist are excluded along with it** — from waves and from publications alike. The initial version was limited to a −0.8 penalty, but a penalty is not enough against mass-generated content: with a thin discovery pool the penalised track still surfaced, and the owner needed "the maximum penalty so they never appear again" (2026-08-09). The only thing that survives an artist veto is tracks with an explicit like: explicit taste matters more. Candidates reachable by edges from a veto track get −0.35; the seed weight of a veto track in the graph is zero, and graph traversal does not expand veto nodes. Pressing the button records a `veto_set` telemetry event on a real session (the equivalent of an explicit dislike for training); removing a veto deletes the row and brings the artist back, but does not rewrite session history. Veto is never synchronised to YouTube: graph edges come from positive seeds, and a YT dislike would hardly change our pool, while remaining a visible and semi-irreversible account state.
 
-Целевой показатель: пересечение соседних волн ≤ 30%, повтор discovery — 0%. Фактическое пересечение пишется в `queue_generations.overlap_previous_percent` и видно в Insights → Discovery pool.
+Target metric: overlap of adjacent waves ≤ 30%, discovery repeat — 0%. The actual overlap is written to `queue_generations.overlap_previous_percent` and is visible in Insights → Discovery pool.
 
-Первые позиции дополнительно предпочитают треки, которые уже успешно проигрывались. Причина в ограничении YouTube: узнать, разрешено ли встраивание, можно только реальной попыткой — ни `oEmbed`, ни `get_song`, ни embed-страница этого не сообщают (проверено 2026-08-01). Непроверенный трек в первой позиции даёт молчаливый пропуск, который выглядит как поломка плеера. Бонус затухает к четвёртой позиции, поэтому discovery не наказывается. Эффект появляется только когда история длиннее окна новизны: до этого любой проверенный трек одновременно является недавним и исключается recency-фильтром.
+The first positions additionally prefer tracks that have already played successfully. The reason is a YouTube limitation: whether embedding is allowed can be learned only by an actual attempt — neither `oEmbed`, nor `get_song`, nor the embed page reports it (verified 2026-08-01). An unverified track in the first position causes a silent skip that looks like a broken player. The bonus decays by the fourth position, so discovery is not penalised. The effect appears only when the history is longer than the novelty window: before that, every verified track is simultaneously recent and is excluded by the recency filter.
 
-Ограничения по умолчанию:
+Default constraints:
 
-- не более одного трека артиста в окне 5;
-- не более двух треков артиста в окне 15;
-- не более трёх подряд кандидатов от одного seed/source;
-- минимум 25% разных seed в первых 20 позициях;
-- liked tracks не идут блоком: они перемежаются с discovery.
+- no more than one track of an artist within a window of 5;
+- no more than two tracks of an artist within a window of 15;
+- no more than three consecutive candidates from one seed/source;
+- at least 25% distinct seeds in the first 20 positions;
+- liked tracks do not go as a block: they are interleaved with discovery.
 
-Все artist-window правила применяет только reranker. Если они делают очередь короче запрошенной при достаточном общем candidate pool, ограничения ослабляются детерминированно: source concentration → максимум два артиста в окне 15 расширяется до трёх → окно одного артиста сокращается с 5 до 3. Hard filters, explicit dislikes и recent-track exclusion никогда не ослабляются. Каждое ослабление записывается reason code и показывается как `diversity widened`.
+All artist-window rules are applied only by the reranker. If they make the queue shorter than requested while the overall candidate pool is sufficient, the constraints are relaxed deterministically: source concentration → the maximum of two artists in the window of 15 is widened to three → the one-artist window is reduced from 5 to 3. Hard filters, explicit dislikes and recent-track exclusion are never relaxed. Each relaxation is recorded with a reason code and shown as `diversity widened`.
 
-## 12. Автоматическое обучение и публикация
+## 12. Automatic training and publishing
 
-### Плейлист — это снимок, а не поток
+### A playlist is a snapshot, not a stream
 
-Волна оптимизирует свежесть: окна новизны, память о прошлых волнах и ограничение ротации намеренно придерживают часть материала. Плейлист читают в произвольный момент, поэтому ему нужен лучший доступный состав, а не отличие от вчерашнего. Генерация с флагом «для публикации» отключает всю механику свежести; диверсификация по артистам остаётся.
+A wave optimises freshness: novelty windows, memory of past waves and the rotation limit deliberately hold back part of the material. A playlist is read at an arbitrary moment, so it needs the best available composition, not a difference from yesterday's. A generation with the "for publication" flag turns off all the freshness machinery; artist diversification remains.
 
-### Preview обязателен и он настоящий
+### Preview is mandatory and it is real
 
-`POST /{kind}/plan` возвращает **сам список треков** — название, артистов, метку familiar/discovery и reason codes, — а не только счётчики. UI показывает его, позволяет проиграть с любой позиции через обычный плеер и предлагает `Regenerate`.
+`POST /{kind}/plan` returns **the track list itself** — title, artists, the familiar/discovery label and reason codes — not just counters. The UI shows it, allows playing it from any position through the regular player, and offers `Regenerate`.
 
-Показанный список запоминается на манифесте (`proposed_desired_json`) вместе с seed: повторный запрос возвращает тот же список, а `Publish` пишет именно его. Иначе публиковалось бы то, чего пользователь не видел, — притом что ровно это обещает строка «never touched without a preview».
+The shown list is stored on the manifest (`proposed_desired_json`) together with the seed: a repeated request returns the same list, and `Publish` writes exactly it. Otherwise something the user had not seen would be published — whereas the line "never touched without a preview" promises exactly that this cannot happen.
 
-`Regenerate` заменяет предложение новым: seed случайный, а отбор внутри `_compose` сэмплирует из двадцати лидеров, а не срезает верх списка. Совпадение между вариантами — 60–80% в зависимости от того, насколько узок пул треков выше порога качества; порядок меняется полностью. Полная независимость вариантов недостижима и нежелательна: плейлист должен состоять из лучшего, а лучшего конечное количество.
+`Regenerate` replaces the proposal with a new one: the seed is random, and the selection inside `_compose` samples from twenty leaders instead of cutting off the top of the list. The overlap between variants is 60–80%, depending on how narrow the pool of tracks above the quality threshold is; the order changes completely. Full independence of the variants is unattainable and undesirable: a playlist must consist of the best, and there is only a finite amount of the best.
 
-Удалить можно и ACTIVE-плейлист — это плейлист слушателя, а проверка маркера по-прежнему гарантирует, что Tuner не тронет ничего чужого. Прежний запрет означал, что не понравившийся плейлист нельзя убрать из приложения вообще.
+An ACTIVE playlist can also be deleted — it is the listener's playlist, and the marker check still guarantees that Tuner will not touch anything that is not its own. The previous prohibition meant that a playlist the listener did not like could not be removed from the application at all.
 
-### Состав собирается под гейты
+### The composition is built to satisfy the gates
 
-Список не «первые N треков волны». Он строится так, чтобы удовлетворить проверки: только треки выше `quality_expected >= -0.20`, доля знакомого в пределах допуска ±10 пунктов, не более трёх треков на артиста, отсутствие соседних треков одного артиста и не менее 40% разных артистов. Перебор идёт от наибольшего допустимого размера вниз, а лимит на артиста ослабляется 3 → 2 → 1 только по необходимости.
+The list is not "the first N tracks of the wave". It is built to satisfy the checks: only tracks above `quality_expected >= -0.20`, the familiar share within a tolerance of ±10 points, no more than three tracks per artist, no adjacent tracks of the same artist and at least 40% distinct artists. The search goes from the largest permissible size downward, and the per-artist limit is relaxed 3 → 2 → 1 only when necessary.
 
-Ранжируется шестикратный запас относительно целевого размера, и каждый выбор сэмплируется из двадцати лидеров, а не срезается сверху. Иначе `Regenerate` возвращал почти те же шестьдесят треков даже при двух сотнях подходящих.
+A sixfold reserve relative to the target size is ranked, and each choice is sampled from twenty leaders rather than cut off from the top. Otherwise `Regenerate` returned almost the same sixty tracks even with two hundred suitable ones.
 
-Срез первых N оставлял все эти условия на волю случая: гейты отклоняли все три плейлиста, а отказ возвращался обычным `200`, из-за чего кнопка Create выглядела неработающей. Отказ всегда сопровождается причиной и показывается по каждому плейлисту отдельно.
+Cutting off the first N left all these conditions to chance: the gates rejected all three playlists, and the rejection was returned as an ordinary `200`, which made the Create button look broken. A rejection is always accompanied by a reason and is shown separately for each playlist.
 
-Первое SHADOW-обучение — после bootstrap-порога 40 сессий и минимальных порогов разнообразия данных/баланса сигналов из §7. Следующие SHADOW/ACTIVE обновления выполняются, если:
+The first SHADOW training happens after the bootstrap threshold of 40 sessions and the minimum data-diversity/signal-balance thresholds from §7. Subsequent SHADOW/ACTIVE updates are performed if:
 
-- появилось минимум 15 новых квалифицированных сессий после последнего snapshot;
-- прошло минимум 60 минут после предыдущего обучения;
-- нет незавершённого training job.
+- at least 15 new qualified sessions have appeared since the last snapshot;
+- at least 60 minutes have passed since the previous training;
+- there is no unfinished training job.
 
-Автопубликация разрешена, если:
+Auto-publication is allowed if:
 
-- чистый baseline из 100 сессий закрыт и есть ACTIVE model snapshot;
-- после последней публикации появилось минимум 15 новых квалифицированных сессий или изменился явный rating;
-- прошло минимум 24 часа;
-- candidate pool не старше 7 дней;
-- новый playlist проходит quality gates;
-- включён `auto_publish`.
+- the clean baseline of 100 sessions is closed and there is an ACTIVE model snapshot;
+- at least 15 new qualified sessions have appeared since the last publication or an explicit rating has changed;
+- at least 24 hours have passed;
+- the candidate pool is no older than 7 days;
+- the new playlist passes the quality gates;
+- `auto_publish` is enabled.
 
-Публикация не запускается просто по таймеру при отсутствии новых данных.
+Publishing is not triggered merely by a timer in the absence of new data.
 
-Исключение — незавершённая публикация PARTIAL. Новые 15 сессий или rating нужны только для создания нового desired plan. PARTIAL является продолжением уже принятого immutable plan и ставится scheduler на следующее 24-часовое окно даже без нового listening signal. Перед каждым фрагментом повторно проверяются OAuth/circuit, ownership marker, fresh remote hash, hard filters, явные dislikes/blocks и оба call budget. Если новый safety-сигнал инвалидировал desired snapshot, продолжение отменяется и следующий новый plan снова требует обычного trigger.
+The exception is an unfinished PARTIAL publication. The new 15 sessions or rating are needed only to create a new desired plan. PARTIAL is the continuation of an already accepted immutable plan and is placed by the scheduler into the next 24-hour window even without a new listening signal. Before each fragment, OAuth/circuit, ownership marker, fresh remote hash, hard filters, explicit dislikes/blocks and both call budgets are re-checked. If a new safety signal has invalidated the desired snapshot, the continuation is cancelled and the next new plan again requires the usual trigger.
 
 ### Playlist quality gates
 
-Для каждого managed playlist planner начинает с `configured_target_size`, по умолчанию 60. Он выбирает наибольший детерминированно достижимый `effective_target_size <= configured_target_size`, при котором temperature quota выдерживается в пределах ±10 процентных пунктов и выполняются остальные gates. Минимальный публикуемый размер — `min_publish_size=25`. Например, для Familiar цель 80%, допустимый минимум 70%, поэтому при достаточном discovery/diversity pool 30 eligible familiar tracks позволяют опубликовать максимум `floor(30 / 0.70)=42` трека вместо вечного отказа на требовании 60. По мере роста pool следующие планы могут увеличивать effective size в пределах обычного incremental budget.
+For each managed playlist the planner starts from `configured_target_size`, 60 by default. It chooses the largest deterministically achievable `effective_target_size <= configured_target_size` at which the temperature quota is kept within ±10 percentage points and the other gates are met. The minimum publishable size is `min_publish_size=25`. For example, for Familiar the target is 80% and the permitted minimum is 70%, so with a sufficient discovery/diversity pool 30 eligible familiar tracks allow publishing a maximum of `floor(30 / 0.70)=42` tracks instead of a perpetual refusal on the requirement of 60. As the pool grows, subsequent plans may increase the effective size within the usual incremental budget.
 
-`Familiar` означает liked track либо трек с сохранённым сильным положительным локальным сигналом — completion, replay или explicit like — по текущей affinity policy. На первом sync без локальной истории familiar pool фактически состоит из лайков. Неизвестная remote history сама по себе familiar-треком не делает.
+`Familiar` means a liked track or a track with a stored strong positive local signal — completion, replay or explicit like — under the current affinity policy. On the first sync without local history the familiar pool effectively consists of likes. Unknown remote history by itself does not make a track familiar.
 
-Desired playlist допускается к initial create или incremental publish, только если одновременно выполнено:
+A desired playlist is admitted to initial create or incremental publish only if all of the following hold simultaneously:
 
-- ровно `effective_target_size` уникальных playable `videoId`, где `25 <= effective_target_size <= configured_target_size`;
-- нет explicit dislikes, blocks, playback-error cooldown или metadata-only items;
-- фактическая familiar/discovery доля отклоняется от цели не более чем на 10 процентных пунктов;
-- число уникальных primary artists не меньше `ceil(0.40 * effective_target_size)`, не более трёх треков одного primary artist и нет соседних треков одного артиста;
-- ни один кандидат не имеет `quality_expected < -0.20`; rule-mapped score и LinUCB exploitation сравниваются по определению выше, exploration bonus не может скрыть отрицательный quality score;
-- mean `quality_expected` не хуже score текущего полностью оцениваемого managed playlist более чем на `0.05`; сравнение выполняется только внутри совместимой `quality_score_source`/policy version;
-- discovery edges не просрочены, каждый discovery item имеет минимум один сохранённый source/reason, один seed даёт не более 20% всего списка;
-- generation воспроизводится из сохранённых serving policy/model ID, feature schema, pool watermark и random seed и даёт тот же desired hash.
+- exactly `effective_target_size` unique playable `videoId` values, where `25 <= effective_target_size <= configured_target_size`;
+- no explicit dislikes, blocks, playback-error cooldown or metadata-only items;
+- the actual familiar/discovery share deviates from the target by no more than 10 percentage points;
+- the number of unique primary artists is at least `ceil(0.40 * effective_target_size)`, there are no more than three tracks of one primary artist and no adjacent tracks of the same artist;
+- no candidate has `quality_expected < -0.20`; the rule-mapped score and LinUCB exploitation are compared per the definition above, the exploration bonus cannot hide a negative quality score;
+- the mean `quality_expected` is not worse than the score of the current fully scorable managed playlist by more than `0.05`; the comparison is performed only within a compatible `quality_score_source`/policy version;
+- discovery edges are not expired, each discovery item has at least one stored source/reason, a single seed accounts for no more than 20% of the whole list;
+- the generation is reproducible from the stored serving policy/model ID, feature schema, pool watermark and random seed and yields the same desired hash.
 
-Если `effective_target_size < configured_target_size`, результат остаётся допустимым, но сохраняет reason `TARGET_SIZE_REDUCED_FOR_POOL` вместе с configured/effective size и available counts по familiar/discovery. Если ни один размер от configured до 25 не проходит, plan получает `INSUFFICIENT_POOL`, показывает exact `requiredFamiliar`, `availableFamiliar`, `requiredDiscovery`, `availableDiscovery`, `minimumPublishSize` и предлагает уменьшить target/temperature либо накопить больше лайков и прослушиваний. До изменения pool watermark или settings тот же failed plan не пересчитывается и YouTube не вызывается.
+If `effective_target_size < configured_target_size`, the result remains admissible but retains the reason `TARGET_SIZE_REDUCED_FOR_POOL` together with the configured/effective size and the available counts for familiar/discovery. If no size from configured down to 25 passes, the plan gets `INSUFFICIENT_POOL`, shows the exact `requiredFamiliar`, `availableFamiliar`, `requiredDiscovery`, `availableDiscovery`, `minimumPublishSize` and suggests reducing the target/temperature or accumulating more likes and listens. Until the pool watermark or settings change, the same failed plan is not recomputed and YouTube is not called.
 
-Результат каждого gate сохраняется с `quality_gate_version=playlist-gates-v2`. Любой иной failure даёт `SKIPPED_QUALITY`, показывает точные причины в preview и не вызывает YouTube. Если текущий remote playlist нельзя корректно оценить, comparative mean gate пропускается с reason `NO_COMPARABLE_REMOTE_SCORE`; при смене rule/ACTIVE score policy — с `INCOMPATIBLE_SCORE_POLICY`. Остальные gates обязательны.
+The result of each gate is stored with `quality_gate_version=playlist-gates-v2`. Any other failure yields `SKIPPED_QUALITY`, shows the exact reasons in the preview and does not call YouTube. If the current remote playlist cannot be scored correctly, the comparative mean gate is skipped with reason `NO_COMPARABLE_REMOTE_SCORE`; on a change of rule/ACTIVE score policy — with `INCOMPATIBLE_SCORE_POLICY`. The other gates are mandatory.
 
-## 13. Оценка качества
+## 13. Quality evaluation
 
 ### Online
 
-- early skip rate по temperature/mood;
+- early skip rate by temperature/mood;
 - completion rate;
-- replay и explicit like rate;
-- novelty: доля never-played и new-artist;
-- diversity: unique artists на 20 треков;
-- regret proxy: ранние skip у high-score candidates;
-- exposure coverage, чтобы модель не застревала в одном cluster.
+- replay and explicit like rate;
+- novelty: share of never-played and new-artist;
+- diversity: unique artists per 20 tracks;
+- regret proxy: early skips on high-score candidates;
+- exposure coverage, so that the model does not get stuck in one cluster.
 
 ### Offline replay
 
-Новая модель сначала прогоняется на временно упорядоченных исторических сессиях. Сравниваются pairwise ordering и expected reward с текущим snapshot. Offline replay не является абсолютным доказательством, потому что не наблюдает реакцию на невыбранные треки; он служит regression guard.
+A new model is first run on time-ordered historical sessions. Pairwise ordering and expected reward are compared with the current snapshot. Offline replay is not absolute proof, because it does not observe the reaction to unselected tracks; it serves as a regression guard.
 
 ### Safety gates
 
-Snapshot не активируется, если:
+A snapshot is not activated if:
 
-- содержит NaN/inf;
-- feature schema не совпадает;
-- offline mean reward хуже текущей serving policy больше чем на `0.03`;
-- top-50 более чем на 40% состоит из одного артиста;
-- в top есть explicit dislikes.
+- it contains NaN/inf;
+- the feature schema does not match;
+- the offline mean reward is worse than the current serving policy by more than `0.03`;
+- the top-50 consists of one artist by more than 40%;
+- there are explicit dislikes in the top.
 
-## 14. Возможное развитие
+## 14. Possible future development
 
-Маленькая локальная embedding-модель может быть добавлена позже для title/artist/album/mood similarity и объяснений. Она должна работать offline и не быть обязательной для запуска.
+A small local embedding model may be added later for title/artist/album/mood similarity and explanations. It must work offline and must not be required for startup.
 
-LLM допустима только как опциональный инструмент:
+An LLM is allowed only as an optional tool:
 
-- предложить человеку название mood;
-- кратко суммировать причины изменения вкуса по уже рассчитанным числам;
-- разметить свободный текст пользователя вроде «спокойное, но не сонное» в фиксированные контексты.
+- suggest a mood name to the person;
+- briefly summarise the reasons for a change in taste from already computed numbers;
+- map the user's free text such as "calm but not sleepy" onto fixed contexts.
 
-LLM не получает OAuth, сырые события или полную историю и не решает, какой трек играть следующим. Анализ самого аудио (CLAP/MERT и подобное) не планируется, пока нет отдельного законного источника локальных audio features.
+The LLM does not receive OAuth, raw events or the full history and does not decide which track to play next. Analysis of the audio itself (CLAP/MERT and the like) is not planned until there is a separate legitimate source of local audio features.

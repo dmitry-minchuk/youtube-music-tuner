@@ -1,28 +1,28 @@
-# Плеер и телеметрия
+# Player and telemetry
 
-## 1. Принцип воспроизведения
+## 1. Playback principle
 
-Frontend встраивает официальный YouTube IFrame Player и управляет им через JavaScript API. Tuner передаёт только `videoId`; не извлекает URL потока, не проксирует media и не сохраняет аудио.
+The frontend embeds the official YouTube IFrame Player and controls it through the JavaScript API. Tuner passes only the `videoId`; it does not extract the stream URL, does not proxy media and does not store audio.
 
-Плеер остаётся видимым, не перекрывается интерфейсом и имеет viewport не менее 200×200 px. Рекомендуемый desktop-размер — 480×270. В iframe задаётся точный `origin=http://127.0.0.1:43127` с учётом настраиваемого порта.
+The player remains visible, is not overlapped by the interface and has a viewport of at least 200×200 px. The recommended desktop size is 480×270. The iframe is given an exact `origin=http://127.0.0.1:43127`, taking the configurable port into account.
 
-Собственная нижняя панель даёт быстрые play/pause/next/previous/like/dislike/volume, но не маскирует обязательные элементы iframe. Автовоспроизведение начинается только после пользовательского действия с учётом browser autoplay policy.
+Tuner's own bottom bar provides quick play/pause/next/previous/like/dislike/volume controls but does not mask the mandatory iframe elements. Autoplay starts only after a user action, subject to the browser autoplay policy.
 
-При переходе документа в `hidden` Tuner фиксирует нейтральное `visibility_changed`. Ставить ли при этом паузу — решает настройка `pause_on_hidden`, **по умолчанию выключенная**. Контекст ограничения: [YouTube Developer Policies](https://developers.google.com/youtube/terms/developer-policies) запрещают background player и определяют его как player, который не отображается в странице, вкладке или экране, просматриваемом пользователем. Неактивная вкладка попадает под это определение.
+When the document transitions to `hidden`, Tuner records a neutral `visibility_changed`. Whether to pause at that point is decided by the `pause_on_hidden` setting, **off by default**. Context of the restriction: the [YouTube Developer Policies](https://developers.google.com/youtube/terms/developer-policies) prohibit a background player and define it as a player that is not displayed on a page, tab or screen being viewed by the user. An inactive tab falls under this definition.
 
-Практика показала, что это неприменимо как поведение по умолчанию: браузеры сообщают `hidden` всякий раз, когда окно перекрыто другим приложением (occlusion на macOS), поэтому музыка обрывалась при каждом переключении между приложениями. Для музыкального плеера это неприемлемо.
+Practice showed that this is not workable as the default behaviour: browsers report `hidden` whenever the window is covered by another application (occlusion on macOS), so the music cut off on every switch between applications. For a music player this is unacceptable.
 
-Решение владельца установки (2026-08-01): **ничто не должно прерывать воспроизведение**, поэтому `Settings → Playback → Pause when this tab is hidden` по умолчанию **выключено**.
+Decision of the installation owner (2026-08-01): **nothing must interrupt playback**, so `Settings → Playback → Pause when this tab is hidden` is **off** by default.
 
-- Выключено: плеер продолжает играть при скрытой вкладке. Владелец локальной некоммерческой установки принимает связанный policy-риск осознанно.
-- Включено: строгое прочтение политики, пауза при любом `hidden`.
-- Состояние хранится в `settings` и применяется к плееру при загрузке UI.
+- Off: the player keeps playing while the tab is hidden. The owner of a local non-commercial installation knowingly accepts the associated policy risk.
+- On: a strict reading of the policy, pause on any `hidden`.
+- The state is stored in `settings` and applied to the player when the UI loads.
 
-Остальные требования политики соблюдаются без изменений: player видимый, не перекрыт интерфейсом, не меньше 200×200, обязательные элементы не маскируются, media не скачивается.
+The remaining policy requirements are met unchanged: the player is visible, is not covered by the interface, is not smaller than 200×200, mandatory elements are not masked, media is not downloaded.
 
 ## 2. PlayerPort
 
-UI вне adapter работает с контрактом:
+Outside the adapter, the UI works with this contract:
 
 ```typescript
 interface PlayerPort {
@@ -38,81 +38,81 @@ interface PlayerPort {
 }
 ```
 
-Adapter переводит YouTube state codes в `UNSTARTED | ENDED | PLAYING | PAUSED | BUFFERING | CUED | ERROR`.
+The adapter translates YouTube state codes into `UNSTARTED | ENDED | PLAYING | PAUSED | BUFFERING | CUED | ERROR`.
 
-## 3. Словарь событий
+## 3. Event vocabulary
 
-| Событие | Когда создаётся | Влияет на reward |
+| Event | When it is created | Affects reward |
 | --- | --- | --- |
-| `track_cued` | iframe подготовил новый `videoId` | нет |
-| `play_started` | первый переход в PLAYING | начало сессии |
-| `play_resumed` | PLAYING после pause/buffer | нет отдельно |
-| `paused` | явная/iframe пауза | нейтрально |
-| `buffering_started` | state BUFFERING | нейтрально |
-| `progress_tick` | каждые 15 секунд активной сессии; содержит cumulative counters | heartbeat, сохраняет прогресс, сам по себе нейтрален |
-| `seek_forward` | позиция скачком вперёд | снижает достоверность completion |
-| `seek_backward` | позиция скачком назад | слабый положительный сигнал |
-| `next_clicked` | пользователь явно нажал next/выбрал другой трек | классифицирует skip |
-| `previous_clicked` | пользователь вернулся | слабый положительный для целевого трека |
-| `ended` | естественный конец | положительный completion |
-| `replay_started` | тот же трек запущен повторно в течение 10 минут | сильный положительный |
-| `like_set` | явная оценка | сильный положительный |
-| `dislike_set` | явная оценка | сильный отрицательный, block |
-| `player_error` | iframe вернул ошибку (например, 150 — встраивание запрещено правообладателем) | нейтрально для вкуса; закрывает сессию с `termination_reason=player_error` и включает 24-часовой cooldown кандидата |
-| `visibility_changed` | visible/hidden | диагностический |
-| `page_closing` | `pagehide`/закрытие | нейтрально |
+| `track_cued` | the iframe has prepared a new `videoId` | no |
+| `play_started` | first transition to PLAYING | session start |
+| `play_resumed` | PLAYING after pause/buffer | not separately |
+| `paused` | explicit/iframe pause | neutral |
+| `buffering_started` | state BUFFERING | neutral |
+| `progress_tick` | every 15 seconds of an active session; contains cumulative counters | heartbeat, saves progress, neutral by itself |
+| `seek_forward` | position jumps forward | lowers the reliability of completion |
+| `seek_backward` | position jumps backward | weak positive signal |
+| `next_clicked` | the user explicitly pressed next/chose another track | classifies the skip |
+| `previous_clicked` | the user went back | weak positive for the target track |
+| `ended` | natural end | positive completion |
+| `replay_started` | the same track was started again within 10 minutes | strong positive |
+| `like_set` | explicit rating | strong positive |
+| `dislike_set` | explicit rating | strong negative, block |
+| `player_error` | the iframe returned an error (for example, 150 — embedding disallowed by the rights holder) | neutral for taste; closes the session with `termination_reason=player_error` and triggers a 24-hour candidate cooldown |
+| `visibility_changed` | visible/hidden | diagnostic |
+| `page_closing` | `pagehide`/closing | neutral |
 
-## 4. Как считается реальное время
+## 4. How real time is calculated
 
-`played_seconds` нельзя вычислять как максимальный `currentTime`: перемотка вперёд ложно создаст дослушивание.
+`played_seconds` must not be computed as the maximum `currentTime`: a forward seek would falsely create a listen-through.
 
-Frontend раз в секунду снимает monotonic clock и позицию player. Интервал добавляется к `played_seconds`, только если:
+Once a second the frontend samples the monotonic clock and the player position. The interval is added to `played_seconds` only if:
 
-- предыдущий и текущий state — PLAYING;
-- вкладка не была frozen;
-- monotonic delta находится в диапазоне 0–2.5 секунды;
-- изменение player position согласуется с естественным воспроизведением, а не seek;
-- нет активного buffering.
+- both the previous and the current state are PLAYING;
+- the tab was not frozen;
+- the monotonic delta is in the range 0–2.5 seconds;
+- the change in player position is consistent with natural playback rather than a seek;
+- there is no active buffering.
 
-Дополнительно хранятся `max_position_seconds`, `seek_forward_seconds`, `seek_backward_seconds`, `seek_forward_count`, `seek_backward_count`, `buffered_seconds` и `wall_clock_seconds`.
+Additionally stored are `max_position_seconds`, `seek_forward_seconds`, `seek_backward_seconds`, `seek_forward_count`, `seek_backward_count`, `buffered_seconds` and `wall_clock_seconds`.
 
-Эффективная длительность определяется в таком порядке:
+The effective duration is determined in this order:
 
-1. конечное положительное значение `YT.Player.getDuration()` после READY/PLAYING — `duration_source=PLAYER` и наиболее авторитетный источник;
-2. положительная metadata duration из каталога — `duration_source=METADATA`;
-3. иначе `effective_duration_seconds=NULL`, `duration_source=UNKNOWN`.
+1. a finite positive value of `YT.Player.getDuration()` after READY/PLAYING — `duration_source=PLAYER` and the most authoritative source;
+2. a positive metadata duration from the catalogue — `duration_source=METADATA`;
+3. otherwise `effective_duration_seconds=NULL`, `duration_source=UNKNOWN`.
 
-Если IFrame позднее отдаёт duration, текущая сессия и track cache обновляются; расхождение player/metadata более двух секунд логируется как безопасная diagnostics-метрика, а для классификации используется PLAYER. При известной duration position ограничивается `duration + 5` секундами. При неизвестной duration backend не применяет этот cap: он ограничивает `played_seconds` суммой проверенных monotonic PLAYING-интервалов и `wall_clock_seconds + 5`, поэтому большой `positionSeconds` не способен создать прослушивание.
+If the IFrame later supplies the duration, the current session and the track cache are updated; a player/metadata discrepancy of more than two seconds is logged as a safe diagnostics metric, and PLAYER is used for classification. When the duration is known, position is capped at `duration + 5` seconds. When the duration is unknown, the backend does not apply this cap: it limits `played_seconds` to the sum of verified monotonic PLAYING intervals and to `wall_clock_seconds + 5`, so a large `positionSeconds` cannot create a listen.
 
 ## 5. Playback session
 
-Сессия идентифицируется UUID и относится к одному `videoId`. Она начинается при первом PLAYING и закрывается при:
+A session is identified by a UUID and belongs to a single `videoId`. It starts at the first PLAYING and is closed on:
 
-- естественном ENDED;
-- явном переходе на другой трек;
-- ошибке без восстановления в течение 30 секунд;
-- отсутствии `progress_tick`/state-transition heartbeat более 2 минут;
-- повторном старте того же трека после закрытия предыдущей сессии.
+- a natural ENDED;
+- an explicit switch to another track;
+- an error with no recovery within 30 seconds;
+- the absence of a `progress_tick`/state-transition heartbeat for more than 2 minutes;
+- a repeated start of the same track after the previous session was closed.
 
-Закрытие вкладки само по себе не означает skip. Незавершённая сессия получает `termination_reason=abandoned_unknown` и не даёт отрицательного reward.
+Closing the tab does not by itself mean a skip. An unfinished session gets `termination_reason=abandoned_unknown` and yields no negative reward.
 
-Квалифицированная сессия: минимум 10 фактически проигранных секунд либо явный like, dislike или Next. Осознанный Next до десятой секунды одновременно закрывает сессию, квалифицирует её и даёт соответствующий early-skip reward; автоматический переход, player error, pause, hidden и закрытие вкладки этого не делают.
+A qualified session: at least 10 actually played seconds, or an explicit like, dislike or Next. A deliberate Next before the tenth second simultaneously closes the session, qualifies it and yields the corresponding early-skip reward; an automatic transition, a player error, a pause, hidden and closing the tab do not do this.
 
-## 6. Доставка событий
+## 6. Event delivery
 
-- Каждое событие имеет `client_event_id` UUID, `session_id`, `sequence_no`, `occurred_at`, `monotonic_ms`, `video_id`, `payload`, `schema_version=1`.
-- Frontend накапливает batch в памяти и IndexedDB до подтверждения backend.
-- Каждые 15 секунд активной сессии создаётся `progress_tick` с cumulative `played_seconds`, `position_seconds`, effective duration, seek/buffer counters и текущим state. Cumulative форма позволяет безопасно пережить повтор или пропущенный batch без двойного суммирования.
-- Сразу после создания tick batch отправляется; дополнительные flush выполняются при смене трека, like/dislike, pause и visibility change.
-- На `pagehide` используется `navigator.sendBeacon`, если доступен.
-- Backend принимает события повторно безопасно; unique constraint на `client_event_id`.
-- Gap в `sequence_no` отмечается, но не блокирует последующие события.
-- Server timestamp хранится отдельно от client timestamp.
-- При crash без `pagehide` теряется не более текущего интервала после последнего созданного tick — максимум около 15 секунд; уже созданные неподтверждённые ticks остаются в IndexedDB и отправляются после reload.
+- Each event has a `client_event_id` UUID, `session_id`, `sequence_no`, `occurred_at`, `monotonic_ms`, `video_id`, `payload`, `schema_version=1`.
+- The frontend accumulates a batch in memory and IndexedDB until the backend acknowledges it.
+- Every 15 seconds of an active session a `progress_tick` is created with cumulative `played_seconds`, `position_seconds`, effective duration, seek/buffer counters and the current state. The cumulative form makes it safe to survive a repeated or missed batch without double summing.
+- Right after a tick is created, the batch is sent; additional flushes are performed on track change, like/dislike, pause and visibility change.
+- On `pagehide`, `navigator.sendBeacon` is used if available.
+- The backend accepts repeated events safely; there is a unique constraint on `client_event_id`.
+- A gap in `sequence_no` is flagged but does not block subsequent events.
+- The server timestamp is stored separately from the client timestamp.
+- On a crash without `pagehide`, no more than the current interval after the last created tick is lost — at most about 15 seconds; ticks that were already created but not acknowledged remain in IndexedDB and are sent after a reload.
 
-## 7. Вывод поведенческих сигналов
+## 7. Deriving behavioural signals
 
-Backend агрегирует события в session summary. При известной duration:
+The backend aggregates events into a session summary. When the duration is known:
 
 - `played_ratio = min(played_seconds / effective_duration_seconds, 1)`;
 - `early_skip = explicit_next AND played_ratio < 0.20`;
@@ -120,34 +120,34 @@ Backend агрегирует события в session summary. При изве�
 - `large_forward_seek = seek_forward_seconds >= max(30, 0.20 * effective_duration_seconds)`;
 - `completed = played_ratio >= 0.90 OR (ended AND played_ratio >= 0.70 AND NOT large_forward_seek)`.
 
-При неизвестной duration `played_ratio=NULL`, а `classification_basis=ABSOLUTE_TIME`:
+When the duration is unknown, `played_ratio=NULL` and `classification_basis=ABSOLUTE_TIME`:
 
-- explicit next при `played_seconds < 30` → `early_skip=true`, менее уверенный raw reward `-2`;
-- explicit next при `30 <= played_seconds < 120` → `mid_skip=true`, raw reward `-0.5`;
-- explicit next после 120 секунд → нейтрально по completion/skip;
+- explicit next at `played_seconds < 30` → `early_skip=true`, a less confident raw reward `-2`;
+- explicit next at `30 <= played_seconds < 120` → `mid_skip=true`, raw reward `-0.5`;
+- explicit next after 120 seconds → neutral with respect to completion/skip;
 - `large_forward_seek = seek_forward_seconds >= 30`;
-- ENDED даёт completion только при `played_seconds >= 60` и отсутствии large forward seek; иначе `ended_unqualified=true` и reward нейтрален.
+- ENDED yields completion only when `played_seconds >= 60` and there is no large forward seek; otherwise `ended_unqualified=true` and the reward is neutral.
 
-Также сохраняются `replayed`, `seek_backward_count`, `explicit_rating`, `qualified`, `reward`, `reward_version` и `classification_basis=RATIO|ABSOLUTE_TIME`. Если duration становится известна позже и raw events ещё находятся в retention, сессия пересчитывается по RATIO.
+Also stored are `replayed`, `seek_backward_count`, `explicit_rating`, `qualified`, `reward`, `reward_version` and `classification_basis=RATIO|ABSOLUTE_TIME`. If the duration becomes known later and the raw events are still within retention, the session is recalculated by RATIO.
 
-Правила reward версионируются. Raw events позволяют детерминированно пересчитать только сессии внутри 180-дневного retention; более старые summaries сохраняют исходные `reward`/`reward_version`. Новая формула применяется к retained окну и новым событиям, не переписывая исторический baseline задним числом.
+The reward rules are versioned. Raw events make it possible to deterministically recalculate only sessions within the 180-day retention; older summaries keep their original `reward`/`reward_version`. The new formula applies to the retained window and to new events, without rewriting the historical baseline retroactively.
 
-Сразу после переагрегации сессия сворачивается в агрегаты трека и его артистов (docs/07 section 4). Это происходит на приёме телеметрии, а не суточным батчем: пропуск должен влиять на следующий трек. Пока эти агрегаты не заполнялись, признаки усталости, недавнего пропуска, новизны и rediscovery тождественно равнялись нулю — то есть история прослушиваний не влияла на выдачу вообще, хотя reward считался правильно.
+Immediately after re-aggregation, the session is rolled up into the aggregates of the track and its artists (docs/07 section 4). This happens when the telemetry is received, not in a daily batch: a skip must affect the next track. While these aggregates were not being populated, the features for fatigue, recent skip, novelty and rediscovery were identically zero — that is, the listening history did not affect the results at all, even though the reward was computed correctly.
 
-## 8. Очередь
+## 8. Queue
 
-- Frontend держит queue snapshot с `queue_id`, порядком и `generation_id`.
-- За 3 трека до конца запрашивает локальное продолжение, не внешний YouTube endpoint.
-- Next атомарно закрывает текущую сессию перед запуском следующей.
-- Previous возвращает последний реально запущенный трек, а не просто предыдущую строку snapshot.
-- Если iframe не может проиграть candidate, создаётся neutral error и выбирается следующий. Код ошибки различается: `101`/`150` означают запрет встраивания правообладателем — это свойство трека, поэтому он получает `is_playable=false` и больше не попадает в очередь; остальные коды дают обычный 24-часовой cooldown. Первый прогон живой библиотеки показал 29 таких треков из 51 лайка, и без этого различия они пропускались бы в каждой очереди.
-- Автоматический переход после `ended` или `player_error` **не отправляет** `next_clicked`: событие явного пропуска создаётся только действием пользователя. Иначе непроигрываемый трек получал бы отрицательный reward, как будто его отвергли.
-- Queue history не перетасовывается при изменении температуры; новое значение действует на ещё не проигранный хвост.
-- Дизлайк сам переключает на следующий трек: оставаться на только что отвергнутом треке бессмысленно.
-- Негативный сигнал — дизлайк, veto или explicit next раньше 60% трека (120 секунд при неизвестной длительности; пороги совпадают с классификацией skip в агрегации) — перестраивает непроигранный хвост локальным retune с дебаунсом ≈1.5 с. Подбор подстраивается на каждом треке, как в референсной «Моей волне», без единого внешнего вызова; уже проигранная голова очереди неприкосновенна.
+- The frontend keeps a queue snapshot with `queue_id`, the order and `generation_id`.
+- At 3 tracks before the end, it requests a local continuation, not an external YouTube endpoint.
+- Next atomically closes the current session before the next one starts.
+- Previous returns the last track that was actually started, not simply the previous row of the snapshot.
+- If the iframe cannot play a candidate, a neutral error is created and the next one is chosen. The error code matters: `101`/`150` mean embedding is prohibited by the rights holder — that is a property of the track, so it gets `is_playable=false` and no longer enters the queue; the other codes give the usual 24-hour cooldown. The first run on the live library showed 29 such tracks out of 51 likes, and without this distinction they would be skipped in every queue.
+- An automatic transition after `ended` or `player_error` **does not send** `next_clicked`: the explicit-skip event is created only by a user action. Otherwise an unplayable track would receive a negative reward, as if it had been rejected.
+- The queue history is not reshuffled when the temperature changes; the new value applies to the not-yet-played tail.
+- A dislike itself switches to the next track: staying on a track that has just been rejected is pointless.
+- A negative signal — a dislike, a veto or an explicit next before 60% of the track (120 seconds when the duration is unknown; the thresholds match the skip classification in aggregation) — rebuilds the not-yet-played tail with a local retune, debounced by ≈1.5 s. The selection adapts on every track, as in the reference Yandex Music "My Wave", without a single external call; the already-played head of the queue is untouchable.
 
-## 9. Что видно при прослушивании вне Tuner
+## 9. What is visible when listening outside Tuner
 
-В официальном YouTube Music Tuner не видит точную позицию, паузы, пропуски и причину остановки. Периодический `get_history()` может дать факт недавнего воспроизведения, но такой сигнал маркируется `source=remote_history`, получает малый вес recency и не используется как negative feedback.
+In the official YouTube Music, Tuner does not see the exact position, pauses, skips and the reason for stopping. A periodic `get_history()` can provide the fact of a recent play, but such a signal is marked `source=remote_history`, gets a small recency weight and is not used as negative feedback.
 
-Лайки, поставленные в официальном приложении, попадут при следующем library sync и будут сильным положительным сигналом. Именно поэтому управляемые плейлисты полезны на iPhone, но максимальная точность обучения достигается при прослушивании через собственный web-player.
+Likes set in the official app will arrive on the next library sync and will be a strong positive signal. This is exactly why managed playlists are useful on an iPhone, but maximum learning accuracy is achieved when listening through Tuner's own web player.

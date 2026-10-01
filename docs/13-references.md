@@ -1,51 +1,51 @@
-# Изученные источники
+# Sources studied
 
-Дата проверки: 2026-08-01.
+Verification date: 2026-08-01.
 
 ## ytmusicapi
 
-- [GitHub repository](https://github.com/sigma67/ytmusicapi) — позиционирование unofficial API, возможности, activity.
-- [PyPI project](https://pypi.org/project/ytmusicapi/) — версия `1.12.1`, дата релиза 2026-06-05, Python requirement и release history.
-- [Stable documentation 1.12.1](https://ytmusicapi.readthedocs.io/en/stable/) — актуальная пользовательская документация.
-- [Setup](https://ytmusicapi.readthedocs.io/en/stable/setup/index.html) — установка и варианты auth.
-- [OAuth authentication](https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html) — собственный client ID/secret, тип `TVs and Limited Input devices`, `oauth.json`.
-- [API reference](https://ytmusicapi.readthedocs.io/en/stable/reference/index.html) — library, history, watch/radio, moods и playlists methods.
-- [Playlist reference 1.12.1](https://ytmusicapi.readthedocs.io/en/stable/reference/playlists.html) — initial `video_ids`, item identity `setVideoId` и `edit_playlist(moveItem=...)` для порядка.
-- [Releases](https://github.com/sigma67/ytmusicapi/releases) — features/fixes и contributors.
-- [Последние commits через GitHub API](https://api.github.com/repos/sigma67/ytmusicapi/commits?per_page=5) — live-проверка активности `main`.
-- [Latest development documentation](https://ytmusicapi.readthedocs.io/en/latest/) — продолжающаяся dev-версия после stable release.
+- [GitHub repository](https://github.com/sigma67/ytmusicapi) — unofficial API positioning, capabilities, activity.
+- [PyPI project](https://pypi.org/project/ytmusicapi/) — version `1.12.1`, release date 2026-06-05, Python requirement and release history.
+- [Stable documentation 1.12.1](https://ytmusicapi.readthedocs.io/en/stable/) — current user documentation.
+- [Setup](https://ytmusicapi.readthedocs.io/en/stable/setup/index.html) — installation and auth options.
+- [OAuth authentication](https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html) — own client ID/secret, type `TVs and Limited Input devices`, `oauth.json`.
+- [API reference](https://ytmusicapi.readthedocs.io/en/stable/reference/index.html) — library, history, watch/radio, moods and playlists methods.
+- [Playlist reference 1.12.1](https://ytmusicapi.readthedocs.io/en/stable/reference/playlists.html) — initial `video_ids`, item identity `setVideoId` and `edit_playlist(moveItem=...)` for ordering.
+- [Releases](https://github.com/sigma67/ytmusicapi/releases) — features/fixes and contributors.
+- [Latest commits via GitHub API](https://api.github.com/repos/sigma67/ytmusicapi/commits?per_page=5) — live check of `main` activity.
+- [Latest development documentation](https://ytmusicapi.readthedocs.io/en/latest/) — the ongoing dev version after the stable release.
 
-Проверка GitHub API 2026-08-01 показала свежие commits в `main` от 2026-07-25, включая parser fix, test parallelization и обновление lint/type-check инфраструктуры. Это operational evidence для решения, но lockfile всё равно фиксирует release, а не commit из `main`.
+The GitHub API check on 2026-08-01 showed fresh commits in `main` from 2026-07-25, including a parser fix, test parallelization and an update of the lint/type-check infrastructure. This is operational evidence for the decision, but the lockfile still pins a release, not a commit from `main`.
 
 ## YouTube
 
-- [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) — создание/управление player, события, `origin`, минимальный размер viewport.
-- [YouTube API Services Developer Policies](https://developers.google.com/youtube/terms/developer-policies) — policy boundary, запрет undocumented API и background player вне просматриваемой страницы/вкладки/экрана.
-- [Required Minimum Functionality](https://developers.google.com/youtube/terms/required-minimum-functionality) — требования к embedded playback/client behavior.
+- [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) — player creation/control, events, `origin`, minimum viewport size.
+- [YouTube API Services Developer Policies](https://developers.google.com/youtube/terms/developer-policies) — policy boundary, prohibition of undocumented APIs and of a background player outside the viewed page/tab/screen.
+- [Required Minimum Functionality](https://developers.google.com/youtube/terms/required-minimum-functionality) — requirements for embedded playback/client behaviour.
 
-## Рекомендательные системы
+## Recommender systems
 
-Изучено 2026-08-01 при переработке candidate generation (ADR-004).
+Studied on 2026-08-01 while reworking candidate generation (ADR-004).
 
-- [A Comprehensive Survey on Retrieval Methods in Recommender Systems](https://arxiv.org/pdf/2308.01204) — трёхступенчатая воронка candidate generation → ranking → re-ranking и роль retrieval-стадии.
-- [Result Diversification in Search and Recommendation: A Survey](https://arxiv.org/pdf/2212.14464) — MMR против DPP, миопичность жадного отбора.
-- [Determinantal Point Processes для разнообразия](https://medium.com/data-science-collective/diversity-in-recommendations-determinantal-point-processes-dpp-2427bf1b6324) — оконный DPP, размеры окна 6–12 в продуктовых лентах.
-- [Item2Vec](https://www.emergentmind.com/papers/1603.04259) — эмбеддинги из совместной встречаемости, без анализа аудио.
-- [Item-Graph2vec](https://arxiv.org/pdf/2310.14215) — граф ко-встречаемости как развитие Item2Vec.
-- [A Random Walk Model for Item Recommendation](https://arxiv.org/pdf/1310.7957) и [Boosting Item-based CF via Nearly Uncoupled Random Walks](https://arxiv.org/pdf/1909.03579) — обход графа похожести как генерация кандидатов.
-- [Spotify Sequential Skip Prediction Challenge](https://www.aicrowd.com/challenges/spotify-sequential-skip-prediction-challenge) и [RNN-подход](https://arxiv.org/pdf/1904.10273) — пропуск как первоклассный сигнал.
-- [Calibrated Recommendations with Contextual Bandits](https://research.atspotify.com/2025/9/calibrated-recommendations-with-contextual-bandits-on-spotify-homepage) — квота состава как калибровка, а не тай-брейкер.
-- [Contextual and Sequential User Embeddings (CoSeRNN)](https://research.atspotify.com/2021/04/contextual-and-sequential-user-embeddings-for-music-recommendation) — предсказание предпочтений на старте сессии.
-- [Efficient Exploration and Exploitation for Sequential Music Recommendation](https://dl.acm.org/doi/10.1145/3625827) — почему чисто случайное исследование сходится медленно.
-- [Интервью команды «Моей волны»](https://the-flow.ru/features/yandeks-moya-volna-intervyu) — три класса алгоритмов, подстройка на каждом треке, взвешивание сигналов по значимости.
+- [A Comprehensive Survey on Retrieval Methods in Recommender Systems](https://arxiv.org/pdf/2308.01204) — the three-stage funnel candidate generation → ranking → re-ranking and the role of the retrieval stage.
+- [Result Diversification in Search and Recommendation: A Survey](https://arxiv.org/pdf/2212.14464) — MMR versus DPP, myopia of greedy selection.
+- [Determinantal Point Processes for diversity](https://medium.com/data-science-collective/diversity-in-recommendations-determinantal-point-processes-dpp-2427bf1b6324) — windowed DPP, window sizes of 6–12 in product feeds.
+- [Item2Vec](https://www.emergentmind.com/papers/1603.04259) — embeddings from co-occurrence, without audio analysis.
+- [Item-Graph2vec](https://arxiv.org/pdf/2310.14215) — a co-occurrence graph as a development of Item2Vec.
+- [A Random Walk Model for Item Recommendation](https://arxiv.org/pdf/1310.7957) and [Boosting Item-based CF via Nearly Uncoupled Random Walks](https://arxiv.org/pdf/1909.03579) — walking a similarity graph as candidate generation.
+- [Spotify Sequential Skip Prediction Challenge](https://www.aicrowd.com/challenges/spotify-sequential-skip-prediction-challenge) and [RNN approach](https://arxiv.org/pdf/1904.10273) — skip as a first-class signal.
+- [Calibrated Recommendations with Contextual Bandits](https://research.atspotify.com/2025/9/calibrated-recommendations-with-contextual-bandits-on-spotify-homepage) — a composition quota as calibration, not as a tie-breaker.
+- [Contextual and Sequential User Embeddings (CoSeRNN)](https://research.atspotify.com/2021/04/contextual-and-sequential-user-embeddings-for-music-recommendation) — predicting preferences at session start.
+- [Efficient Exploration and Exploitation for Sequential Music Recommendation](https://dl.acm.org/doi/10.1145/3625827) — why purely random exploration converges slowly.
+- [Interview with the Yandex Music My Wave team](https://the-flow.ru/features/yandeks-moya-volna-intervyu) (in Russian) — three classes of algorithms, adjusting on every track, weighting signals by significance.
 
 ## Docker
 
-- [Docker volumes](https://docs.docker.com/engine/storage/volumes/) — lifecycle named volumes, default copy/pre-population пустого volume и backup/restore guidance.
+- [Docker volumes](https://docs.docker.com/engine/storage/volumes/) — named volume lifecycle, default copy/pre-population of an empty volume and backup/restore guidance.
 
-## Как применять источники
+## How to apply the sources
 
-- `ytmusicapi` docs определяют реальный поддерживаемый интерфейс adapter.
-- Официальная YouTube документация имеет приоритет для playback и UI constraints.
-- Ни один источник не гарантирует стабильность внутренних YouTube Music endpoints; поэтому caching, adapter tests, conservative call budget и rollback обязательны.
-- Перед началом реализации и каждым dependency upgrade нужно повторно проверить stable version, setup/OAuth changes и repository activity.
+- The `ytmusicapi` docs define the real supported adapter interface.
+- The official YouTube documentation takes priority for playback and UI constraints.
+- No source guarantees the stability of internal YouTube Music endpoints; therefore caching, adapter tests, a conservative call budget and rollback are mandatory.
+- Before implementation starts and at every dependency upgrade, the stable version, setup/OAuth changes and repository activity must be re-checked.
