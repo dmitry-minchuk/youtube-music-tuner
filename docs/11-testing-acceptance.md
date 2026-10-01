@@ -140,7 +140,7 @@ A fake `PlayerPort` reproduces ready/playing/buffering/paused/ended/error and a 
 - like → pending sync → synced/error;
 - keyboard navigation and visible focus;
 - the iframe panel is not smaller than the minimum size on a supported desktop viewport;
-- a tab going hidden pauses the player and does not create a negative reward;
+- a tab going hidden does not create a negative reward and pauses the player only when `pause_on_hidden` is on;
 - the destructive dialog describes the exact scope.
 
 ## 6. Real-account smoke
@@ -167,7 +167,7 @@ The last step is destructive and is not part of the automatic default run. Manag
 | AT-03 | Initial sync | likes/playlists cached, a screen refresh does not trigger new YTM calls |
 | AT-04 | Play through UI | the visible iframe plays, custom controls and queue work |
 | AT-05 | Early explicit next | correct played time and negative session reward |
-| AT-06 | Buffer/close/hidden | no negative signal; hidden additionally puts the player on policy pause |
+| AT-06 | Buffer/close/hidden | no negative signal; with `pause_on_hidden` on, hidden additionally puts the player on policy pause |
 | AT-07 | Bootstrap and baseline | up to 40 — rule ranker only; 40–99 — rule serving + SHADOW; ACTIVE is possible after a clean 100 and safety gates |
 | AT-08 | Temperature | the first 20 items match the familiar/discovery quota and diversity |
 | AT-09 | Autogeneration | 15 new sessions trigger training/new plan without user involvement; PARTIAL continues without a new signal after the cooldown |

@@ -76,7 +76,7 @@ Separately: a like that no one's radio points to is absent from the support tabl
 
 Radio was chosen over related because it costs one call and returns up to 25 candidates — the best ratio of material to calls. Disliked nodes and nodes with negative decayed reward are not expanded: pulling in things similar to what is disliked is pointless. When the frontier is exhausted, the nodes that have gone longest without a refresh are re-opened.
 
-The overall daily ceiling for discovery calls is 60 (docs/03 §9).
+The overall daily ceiling for discovery calls is 120 (docs/03 §9).
 
 ## 4. Hard filters
 
@@ -280,7 +280,7 @@ Mood is a separate axis, not a synonym of temperature. V1 offers:
 
 Initially, mood uses candidates' membership in YouTube Music mood playlists and behavioural history specifically in that context. The user selects the context explicitly; the application does not try to guess emotions with a camera, a microphone or an LLM.
 
-`Background` here means an unobtrusive musical character with an open, visible tab, not permission for background playback; the policy pause when hidden applies in all moods.
+`Background` here means an unobtrusive musical character with an open, visible tab, not permission for background playback; the hidden-tab pause setting (`pause_on_hidden`, docs/04 section 1) applies in all moods.
 
 If the pool for a mood is too small, the filter becomes a soft boost and the UI shows `context widened`; the queue is not looped.
 

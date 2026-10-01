@@ -4,7 +4,7 @@ A local personal music player and recommender system on top of YouTube Music. Th
 
 ## Status
 
-The documentation has been brought to revision 1.2.1, and phases 0–6 of the [roadmap](docs/12-roadmap.md) are implemented: backend, frontend, YouTube Music integration, a player with telemetry, the recommender, online learning, safe publishing and maintenance. The application starts with a single command; a real end-to-end run on a live account (`REAL_YTM_TESTS=1`) has not been performed yet.
+The documentation has been brought to revision 1.3, and phases 0–7 of the [roadmap](docs/12-roadmap.md) are implemented: backend, frontend, YouTube Music integration, a player with telemetry, the recommender, online learning, safe publishing, maintenance and selection quality. The application starts with a single command; a real end-to-end run on a live account (`REAL_YTM_TESTS=1`) has not been performed yet.
 
 What already works:
 

@@ -187,8 +187,6 @@ This is not an official quota but an application safeguard:
 | Candidate refresh | 1 per day, at most 6 seeds |
 | Graph frontier expansion | every 6 hours, at most 12 nodes per run (1 radio call each) |
 | All discovery calls (`get_watch_playlist`, `get_song_related`) | at most 120 per day in total; graph expansion never displaces publishing |
-
-The discovery-call ceiling exists so that a looping job does not hammer YouTube, not to save on exploration: covering every like with at least one request costs one call per track, and with sixty roots a smaller limit would stretch the representation of the whole taste over two days.
 | Remote publish | 1 publish window per day |
 | Initial creation of a managed playlist | one confirmed create with at most `configured_target_size` initial IDs and up to three verify reads; at most 4 playlist-endpoint requests per playlist |
 | Subsequent item changes of one managed playlist | at most 15 logical item changes per window |
@@ -198,6 +196,8 @@ The discovery-call ceiling exists so that a looping job does not hammer YouTube,
 | Manual cleanup of a setup artifact | at most 2 playlist-endpoint requests per explicit confirmation: 1 fresh marker read + 1 `delete_playlist`; not counted in the automatic 51, but accounted for by the ledger/circuit and not retried blindly |
 | Retry after a transient error | 60 seconds → 5 minutes → 30 minutes → circuit open |
 | Search | only user input, debounce + cache |
+
+The discovery-call ceiling exists so that a looping job does not hammer YouTube, not to save on exploration: covering every like with at least one request costs one call per track, and with sixty roots a smaller limit would stretch the representation of the whole taste over two days.
 
 Initial setup is a separate explicit operation: at most 12 endpoint requests for the three playlists (a create plus up to three verification reads for each), all recorded in the ledger; automatic publish is not started on the same day. Every external call is recorded in `api_call_ledger` with the playlist/publication ID and a read/mutation flag. When the item, per-playlist request or global request budget is exceeded, automatic jobs are deferred; a manual force action requires a separate confirmation in the UI and does not bypass request caps or the circuit breaker on an auth/rate-limit error.
 
