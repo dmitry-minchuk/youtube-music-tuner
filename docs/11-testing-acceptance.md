@@ -79,7 +79,7 @@ Real write tests are never run by the ordinary CI command.
 - a `DISLIKE` read from YouTube becomes a local dislike, `LIKE` a local like, `INDIFFERENT` clears only a dislike; a pending or recently changed local rating is never overwritten by a read;
 - the liked-songs sync does not overwrite a pending local rating;
 - a dislike blocks the same song under another `videoId` (same normalised title and primary artist);
-- the explicit regenerate reads the playlist and the other Tuner playlists, applies their dislikes, and the written list contains none of them;
+- the explicit regenerate reads the playlist, the other Tuner playlists and the listening history, applies their dislikes, and the written list contains none of them;
 - a written track that the verification read shows as disliked is removed in the same action and reported as `removedAfterWrite`;
 - a list that contains an excluded track despite the generation is not written;
 - the explicit regenerate adds the new list before removing the previous items, never empties the playlist, and closes an open PARTIAL as `SUPERSEDED_BY_REGENERATE`;

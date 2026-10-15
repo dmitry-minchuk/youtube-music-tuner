@@ -333,8 +333,8 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
       {isActive && (
         <p className={styles.meta}>
           Regenerate &amp; update on YouTube picks up the likes and dislikes you set in YouTube
-          Music on the Tuner playlists, builds a new selection from all your listening and
-          replaces this playlist&apos;s tracks on YouTube.
+          Music (on the Tuner playlists and anything in your listening history), builds a new
+          selection from all your listening and replaces this playlist&apos;s tracks on YouTube.
         </p>
       )}
       <div className={styles.actions}>

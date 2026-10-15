@@ -660,6 +660,17 @@ def _read_sibling_ratings(db: Session, manifest: ManagedPlaylist, catalog: Music
     return learned
 
 
+def _read_history_ratings(db: Session, catalog: MusicCatalogPort) -> int:
+    started = utcnow()
+    try:
+        history = catalog.history()
+    except (AuthError, RateLimited):
+        raise
+    except IntegrationError:
+        return 0
+    return len(repo.apply_remote_ratings(db, [item.track for item in history], started))
+
+
 def _written_as_planned(actual: list[str], desired: list[str]) -> bool:
     return matches_up_to_substitutions(actual, desired) or matches_composition(actual, desired)
 
@@ -684,6 +695,7 @@ def regenerate_contents(
         raise OwnershipError("remote ownership marker does not match")
     db.commit()
     learned = len(changed) + _read_sibling_ratings(db, manifest, catalog)
+    learned += _read_history_ratings(db, catalog)
     db.commit()
 
     outcome = RegenerateOutcome(status="SKIPPED_QUALITY", ratings_applied=learned)

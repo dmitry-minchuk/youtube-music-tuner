@@ -813,3 +813,53 @@ def test_composition_tolerance_edges() -> None:
     assert not matches_composition(nine[1:], nine)
     assert not matches_composition([], twenty)
     assert not matches_composition(twenty, [])
+
+
+def test_a_dislike_from_the_listening_history_is_never_written(
+    authed_client: TestClient, db_session: Session, live: LivePlaylist
+) -> None:
+    played_elsewhere = [f"disc-{index}" for index in range(140, 240)]
+    live.history_items = [
+        RemoteHistoryItem(track=remote_track(video_id, Rating.DISLIKE), play_order=order)
+        for order, video_id in enumerate(played_elsewhere)
+    ]
+
+    body = regenerate(authed_client)
+
+    assert body["status"] == "COMPLETE"
+    assert body["ratingsApplied"] >= len(played_elsewhere)
+    assert not set(played_elsewhere) & set(live.ids())
+    assert body["removedAfterWrite"] == 0
+
+
+def test_a_rate_limited_history_read_stops_before_any_write(
+    authed_client: TestClient, db_session: Session, live: LivePlaylist
+) -> None:
+    from app.integrations.youtube_music.errors import RateLimited
+
+    def refuse() -> list:
+        raise RateLimited("429")
+
+    live.history = refuse  # type: ignore[method-assign]
+
+    response = authed_client.post("/api/v1/managed-playlists/BALANCE/regenerate")
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "LOCAL_BUDGET_EXCEEDED"
+    assert live.appended == []
+
+
+def test_an_unavailable_history_is_skipped(
+    authed_client: TestClient, db_session: Session, live: LivePlaylist
+) -> None:
+    from app.integrations.youtube_music.errors import Unavailable
+
+    def down() -> list:
+        raise Unavailable("down")
+
+    live.history = down  # type: ignore[method-assign]
+
+    body = regenerate(authed_client)
+
+    assert body["status"] == "COMPLETE"
+    assert body["ratingsApplied"] == 4
