@@ -56,8 +56,8 @@ The adapter translates YouTube state codes into `UNSTARTED | ENDED | PLAYING | P
 | `previous_clicked` | the user went back | weak positive for the target track |
 | `ended` | natural end | positive completion |
 | `replay_started` | the same track was started again within 10 minutes | strong positive |
-| `like_set` | explicit rating | strong positive |
-| `dislike_set` | explicit rating | strong negative, block |
+| `like_set` | explicit rating set (not emitted when a like is removed) | strong positive |
+| `dislike_set` | explicit rating set (not emitted when a dislike is removed) | strong negative, block |
 | `player_error` | the iframe returned an error (for example, 150 — embedding disallowed by the rights holder) | neutral for taste; closes the session with `termination_reason=player_error` and triggers a 24-hour candidate cooldown |
 | `visibility_changed` | visible/hidden | diagnostic |
 | `page_closing` | `pagehide`/closing | neutral |

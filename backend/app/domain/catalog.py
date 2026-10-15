@@ -33,8 +33,6 @@ class ArtistRef:
 
 @dataclass(frozen=True, slots=True)
 class Track:
-    """A playable track. ``video_id`` is None for metadata-only entries."""
-
     video_id: str | None
     title: str
     artists: tuple[ArtistRef, ...]
@@ -43,6 +41,7 @@ class Track:
     album_title: str | None = None
     thumbnail_url: str | None = None
     is_playable: bool = True
+    like_status: Rating | None = None
 
     @property
     def primary_artist(self) -> ArtistRef | None:

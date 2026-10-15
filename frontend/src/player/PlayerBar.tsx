@@ -11,6 +11,13 @@ const SYNC_LABEL: Record<RatingSyncStatus, string> = {
   FAILED: "not synced",
 };
 
+export function nextRating(
+  target: "LIKE" | "DISLIKE",
+  active: boolean,
+): "LIKE" | "DISLIKE" | "INDIFFERENT" {
+  return active ? "INDIFFERENT" : target;
+}
+
 /**
  * Our own transport controls. They sit below the iframe and never mask or
  * imitate the player's required elements (docs/04 section 1).
@@ -46,10 +53,9 @@ export function PlayerBar(): React.JSX.Element | null {
   // Setting a dislike also moves on — staying on a rejected track makes no
   // sense — and lets the queue tail adapt to the signal (docs/04 s.8).
   const rate = (target: "LIKE" | "DISLIKE") => {
-    const active = target === "LIKE" ? liked : disliked;
-    const desiredState = active ? "INDIFFERENT" : target;
+    const desiredState = nextRating(target, target === "LIKE" ? liked : disliked);
     if (desiredState === "DISLIKE") void store.dislikeCurrent();
-    else void store.rate(target);
+    else if (desiredState === "LIKE") void store.rate("LIKE");
     setRating.mutate({ videoId: track.videoId, desiredState });
   };
 

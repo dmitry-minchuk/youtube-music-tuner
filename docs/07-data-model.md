@@ -32,6 +32,8 @@ One row per track:
 - `desired_rating`, `rating_revision`, `rating_synced_revision`, `rating_sync_status`;
 - `source_snapshot_id`, `updated_at`.
 
+A rating may also come from YouTube Music: a `likeStatus` read from a playlist or history item is applied here and stored as already synchronised (docs/03 section 6). `rating_sync_status` and `remote_rating_synced_at` are what protect a newer action from a stale read.
+
 ### `taste_vetoes`
 
 The local strong negative "Don't Like At All" (docs/05 §11). A separate table, because affinity aggregates are idempotently rebuilt from sessions and cannot carry a manual signal:
@@ -167,7 +169,7 @@ PLANNED → WRITING → VERIFYING → COMPLETE
                     └────────→ FAILED
 ```
 
-The record contains the remote-before snapshot, the immutable desired snapshot/hash, the target generation, `quality_gate_version` and the gate results, configured/effective target size, a bounded diff, remaining item/request counts, item-change/request budgets, the expected intermediate hash, applied operations, error code and verification hash. PARTIAL continues the same desired hash until it reaches COMPLETE or is explicitly invalidated by a safety event. The continuation does not wait for 15 new sessions, but has its own `not_before` of the next 24-hour window and again passes the ownership/hash/safety/budget checks.
+The record contains the remote-before snapshot, the immutable desired snapshot/hash, the target generation, `quality_gate_version` and the gate results, configured/effective target size, a bounded diff, remaining item/request counts, item-change/request budgets, the expected intermediate hash, applied operations, error code and verification hash. PARTIAL continues the same desired hash until it reaches COMPLETE or is explicitly invalidated by a safety event (`FAILED/DESIRED_INVALIDATED` when the plan contains a track disliked or vetoed since, `FAILED/SUPERSEDED_BY_REGENERATE` when an explicit regenerate replaced it). An explicit regenerate (docs/03 section 8) stores its publication with the same fields; its error codes are `ADD_FAILED`, `ADD_OUTCOME_UNKNOWN`, `REMOVE_FAILED_AFTER_ADD`, `VERIFY_READ_FAILED`, `VERIFICATION_MISMATCH` and `CLEANUP_FAILED`. The continuation does not wait for 15 new sessions, but has its own `not_before` of the next 24-hour window and again passes the ownership/hash/safety/budget checks.
 
 ## 6. Jobs and external calls
 

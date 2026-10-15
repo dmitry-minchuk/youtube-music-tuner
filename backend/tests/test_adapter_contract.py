@@ -15,6 +15,7 @@ from app.integrations.youtube_music.errors import (
     RateLimited,
     RemoteChanged,
     Unavailable,
+    WriteRejected,
 )
 from app.settings import Settings
 from tests.fakes import FakeYtMusicClient
@@ -205,3 +206,25 @@ def test_malformed_payload_raises_parse_error(adapter_factory) -> None:
     adapter, _ = adapter_factory(get_account_info={"unexpected": True})
     with pytest.raises(ParseError):
         adapter.account()
+
+
+def test_append_keeps_duplicates_and_requires_a_confirmed_edit(adapter_factory) -> None:
+    adapter, client = adapter_factory()
+    adapter.append_playlist_items("PLx", ["a", "b"])
+    _, args, kwargs = client.calls[-1]
+    assert args == ("PLx", ["a", "b"]) and kwargs == {"duplicates": True}
+
+    rejected, _ = adapter_factory(add_playlist_items={"actions": [{"addToToastAction": {}}]})
+    with pytest.raises(WriteRejected):
+        rejected.append_playlist_items("PLx", ["a"])
+
+
+def test_remove_sends_set_video_ids_and_accepts_a_plain_status(adapter_factory) -> None:
+    adapter, client = adapter_factory(remove_playlist_items="STATUS_SUCCEEDED")
+    adapter.remove_playlist_items("PLx", [("a", "set-a")])
+    _, args, _ = client.calls[-1]
+    assert args == ("PLx", [{"videoId": "a", "setVideoId": "set-a"}])
+
+    rejected, _ = adapter_factory(remove_playlist_items="STATUS_FAILED")
+    with pytest.raises(WriteRejected):
+        rejected.remove_playlist_items("PLx", [("a", "set-a")])

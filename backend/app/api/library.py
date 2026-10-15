@@ -32,6 +32,7 @@ from app.persistence.models import (
     Artist,
     LibraryTrackState,
     ManagedPlaylist,
+    PlaylistPublication,
     RemotePlaylist,
     RemotePlaylistItem,
     TasteVeto,
@@ -141,6 +142,19 @@ def library_tracks(
     }
 
 
+def _last_write(db: Session, manifest: ManagedPlaylist) -> dict[str, Any]:
+    query = select(PlaylistPublication).where(
+        PlaylistPublication.managed_playlist_id == manifest.managed_playlist_id
+    )
+    if manifest.setup_started_at is not None:
+        query = query.where(PlaylistPublication.created_at >= manifest.setup_started_at)
+    latest = db.scalar(query.order_by(PlaylistPublication.created_at.desc()).limit(1))
+    return {
+        "lastWriteStatus": latest.status if latest else None,
+        "lastWriteErrorCode": latest.error_code if latest else None,
+    }
+
+
 @router.get("/playlists")
 def list_playlists(db: Session = Depends(get_session)) -> dict[str, Any]:
     managed = {
@@ -195,6 +209,7 @@ def list_playlists(db: Session = Depends(get_session)) -> dict[str, Any]:
             "autoPublishEnabled": row.auto_publish_enabled,
             # A stuck card must be able to explain itself (docs/06 s.6).
             "setupErrorCode": row.setup_error_code,
+            **_last_write(db, row),
         }
         for row in db.scalars(select(ManagedPlaylist))
         # A DELETED row is a tombstone: hiding it is the "deleted" feedback,

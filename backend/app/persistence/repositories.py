@@ -9,12 +9,13 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domain.catalog import Rating, RemotePlaylistSnapshot
 from app.domain.catalog import RemotePlaylist as DomainPlaylist
-from app.domain.catalog import RemotePlaylistSnapshot
 from app.domain.catalog import Track as DomainTrack
 from app.persistence.models import (
     Artist,
@@ -89,9 +90,72 @@ def library_state(session: Session, video_id: str) -> LibraryTrackState:
     return row
 
 
+LOCAL_RATING_GRACE = dt.timedelta(minutes=10)
+
+
+def _local_rating_wins(state: LibraryTrackState | None, read_started_at: dt.datetime) -> bool:
+    if state is None:
+        return False
+    if state.rating_sync_status != "SYNCED":
+        return True
+    synced_at = state.remote_rating_synced_at
+    return synced_at is not None and synced_at >= read_started_at - LOCAL_RATING_GRACE
+
+
+def apply_remote_ratings(
+    session: Session,
+    tracks: Iterable[DomainTrack],
+    read_started_at: dt.datetime,
+    *,
+    may_clear_dislikes: bool = False,
+) -> list[str]:
+    changed: list[str] = []
+    now = utcnow()
+    for track in tracks:
+        if track.video_id is None or track.like_status is None:
+            continue
+        if track.like_status is not Rating.INDIFFERENT:
+            upsert_track(session, track)
+        if session.get(Track, track.video_id) is None:
+            continue
+        state = session.get(LibraryTrackState, track.video_id)
+        if _local_rating_wins(state, read_started_at):
+            continue
+        status = track.like_status
+        if status is Rating.INDIFFERENT:
+            if not may_clear_dislikes or state is None or not state.is_disliked:
+                continue
+            state.is_disliked = False
+            state.desired_rating = Rating.INDIFFERENT.value
+        else:
+            state = state or library_state(session, track.video_id)
+            if status is Rating.DISLIKE:
+                if state.is_disliked and not state.is_liked:
+                    continue
+                state.is_disliked = True
+                state.is_liked = False
+            else:
+                if state.is_liked and not state.is_disliked:
+                    continue
+                state.is_liked = True
+                state.is_disliked = False
+                state.is_in_library = True
+            state.desired_rating = status.value
+        state.rating_synced_revision = state.rating_revision
+        state.rating_sync_status = "SYNCED"
+        state.remote_rating_synced_at = now
+        state.updated_at = now
+        changed.append(track.video_id)
+    session.flush()
+    return changed
+
+
 def mark_liked(session: Session, video_ids: set[str], snapshot_id: str) -> None:
     """Reconcile the liked set: newly liked in, unliked out, telemetry kept."""
     for video_id in video_ids:
+        existing = session.get(LibraryTrackState, video_id)
+        if existing is not None and existing.rating_sync_status != "SYNCED":
+            continue
         state = library_state(session, video_id)
         state.is_liked = True
         state.is_disliked = False
@@ -103,7 +167,7 @@ def mark_liked(session: Session, video_ids: set[str], snapshot_id: str) -> None:
         select(LibraryTrackState).where(LibraryTrackState.is_liked.is_(True))
     ).all()
     for state in previously_liked:
-        if state.video_id not in video_ids:
+        if state.video_id not in video_ids and state.rating_sync_status == "SYNCED":
             state.is_liked = False
             state.updated_at = utcnow()
 

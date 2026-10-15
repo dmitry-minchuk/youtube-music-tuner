@@ -8,12 +8,14 @@ invented, and a malformed payload raises ParseError with no raw content.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 from typing import Any
 
 from app.domain.catalog import (
     Account,
     ArtistRef,
     CandidateSource,
+    Rating,
     RemoteHistoryItem,
     RemotePlaylist,
     RemotePlaylistItem,
@@ -120,6 +122,15 @@ def parse_track(raw: Any, *, require_video_id: bool = False) -> Track:
     )
 
 
+def _with_like_status(track: Track, entry: Any) -> Track:
+    raw = entry.get("likeStatus") if isinstance(entry, dict) else None
+    try:
+        status = Rating(raw) if isinstance(raw, str) else None
+    except ValueError:
+        status = None
+    return replace(track, like_status=status) if status is not None else track
+
+
 def parse_account(raw: Any) -> Account:
     item = _as_dict(raw, "account")
     name = item.get("accountName")
@@ -184,7 +195,7 @@ def parse_playlist_snapshot(
     items: list[RemotePlaylistItem] = []
     for position, entry in enumerate(_as_list(payload.get("tracks"), "playlist tracks"), start=1):
         try:
-            track = parse_track(entry)
+            track = _with_like_status(parse_track(entry), entry)
         except ParseError:
             continue
         set_video_id = entry.get("setVideoId") if isinstance(entry, dict) else None
@@ -210,7 +221,7 @@ def parse_history(raw: Any) -> list[RemoteHistoryItem]:
     items: list[RemoteHistoryItem] = []
     for order, entry in enumerate(_as_list(raw, "history"), start=1):
         try:
-            track = parse_track(entry, require_video_id=True)
+            track = _with_like_status(parse_track(entry, require_video_id=True), entry)
         except ParseError:
             continue
         played = entry.get("played") if isinstance(entry, dict) else None

@@ -99,3 +99,4 @@ def _no_verify_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.publishing import service
 
     monkeypatch.setattr(service, "VERIFY_BACKOFF_SECONDS", (0.0, 0.0, 0.0))
+    monkeypatch.setattr(service, "REGENERATE_VERIFY_DELAYS", (0.0, 0.0))

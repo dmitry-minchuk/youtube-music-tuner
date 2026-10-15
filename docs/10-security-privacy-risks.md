@@ -55,8 +55,9 @@ The greatest application-level risk is to corrupt an existing playlist. Safeguar
 - playlist quality gates before any create/publish;
 - a fresh read and an optimistic `content_hash` before writing;
 - a full before-snapshot;
-- preview diff;
-- the initial create in a single confirmed call with `effective_target_size` IDs and an immediate full verification; afterwards at most 15 item changes and 15 mutating requests per window;
+- preview diff for the incremental path; the explicit regenerate of an ACTIVE playlist needs a confirming second click naming the playlist, and shows the posted list right after (ADR-005);
+- the initial create in a single confirmed call with `effective_target_size` IDs and an immediate full verification; afterwards at most 15 item changes and 15 mutating requests per window on the incremental path;
+- the explicit regenerate adds the new list first and removes the previous items second, so a failure never leaves the playlist empty; it costs at most 6 requests on the playlist plus one read per other Tuner playlist and is refused unless both budgets below have room for them;
 - a per-playlist endpoint cap of 17 (fresh read + up to 15 mutations + verify) and a global automatic cap of 51 requests/day for three playlists;
 - a PARTIAL publication continues the immutable desired hash without a new listening threshold, but waits 24 hours and passes the safety/ownership/hash/budget checks again;
 - a state machine and a verification read;
@@ -115,7 +116,9 @@ Before any public hosting or commercialisation, development must be stopped and 
 | The pool reflects only part of the taste, waves sound the same | **materialised** | medium | breadth before depth when traversing the graph: unexpanded favourites are expanded before reachable candidates; a root coverage metric | low |
 | The scheduler goes into a tight loop and bloats the DB | **materialised** | high | backoff on any completed attempt, circuit only for external jobs, a limit on consecutive runs, retention of successful jobs | low |
 | A long external call holds the SQLite write lock and loses telemetry | **materialised** | medium | commit right after the ID is received, busy_timeout 30 s | low |
-| Blind publishing: the user does not see the playlist's contents | **materialised** | medium | Preview returns the tracks and plays them, Publish writes the previewed list, the button is blocked until previewed | low |
+| Blind publishing: the user does not see the playlist's contents | **materialised** | medium | Preview returns the tracks and plays them, Publish writes the previewed list; the explicit regenerate is confirmed and shows the posted list right after it, the previous contents stay in a backup | low |
+| Dislikes set in YouTube Music are ignored and the disliked tracks come back into the playlists | **materialised** (2026-10-15: 6/13/16 disliked tracks in the three playlists) | high | `likeStatus` of playlist and history items is applied locally; the same song under another id is blocked too; every regeneration re-reads all Tuner playlists first and re-checks the written list | low: a dislike of a track never seen in a playlist or history is only learned from the verification read, and the track is taken out by one more request in the same action |
+| Full replacement of a playlist through an unofficial API looks like automation to YouTube | low | medium | only on an explicit confirmed click, 2–3 mutating requests per press, per-playlist 17/24h and global 51/day request budgets, circuit breaker | low |
 | IFrame track unavailable/ad | medium | low-medium | neutral error, skip candidate; do not circumvent the restrictions | medium |
 | Playback with a hidden tab diverges from a strict reading of the policy | medium | low | a setting with an explicit description, off by the owner's decision; the player stays visible and unmasked | accepted by the owner |
 | Public/LAN exposure by mistake | low | high | hardcoded loopback Compose mapping, startup warning | low |

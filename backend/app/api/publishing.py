@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import random
+import threading
+from collections import defaultdict
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
@@ -31,15 +33,21 @@ from app.publishing.service import (
     PUBLISH_WINDOW,
     OwnershipError,
     PlaylistNotVerified,
+    active_siblings,
     cleanup_setup_artifact,
     complete_setup,
     create_setup_intent,
     desired_hash,
     publish_window,
     reconcile_setup,
+    regenerate_contents,
+    write_in_progress,
 )
+from app.recommender.wave import publishing_exclusions
 
 router = APIRouter(prefix="/api/v1/managed-playlists", tags=["publishing"])
+
+_WRITE_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 Kind = Literal["FAMILIAR", "BALANCE", "DISCOVERY"]
 
@@ -107,20 +115,37 @@ def _stored_proposal(db: Session, kind: str) -> dict[str, Any] | None:
     if manifest is None:
         return None
     stored = manifest.proposed_desired_json
-    return stored if isinstance(stored, dict) and stored.get("tracks") else None
+    if not (isinstance(stored, dict) and stored.get("tracks")):
+        return None
+    stored_ids = {track.get("videoId") for track in stored["tracks"]}
+    return None if stored_ids & publishing_exclusions(db) else stored
+
+
+def _store_proposal(
+    manifest: ManagedPlaylist,
+    random_seed: int | None,
+    configured_target_size: int,
+    tracks: list[dict[str, Any]],
+) -> None:
+    manifest.proposed_desired_json = {
+        "randomSeed": random_seed,
+        "generatedAt": utcnow().isoformat() + "Z",
+        "configuredTargetSize": configured_target_size,
+        "effectiveTargetSize": len(tracks),
+        "tracks": tracks,
+    }
 
 
 def _remember_proposal(db: Session, kind: str, result: DesiredListResult) -> None:
     manifest = db.scalar(select(ManagedPlaylist).where(ManagedPlaylist.kind == kind))
     if manifest is None or not result.passed:
         return
-    manifest.proposed_desired_json = {
-        "randomSeed": result.random_seed,
-        "generatedAt": utcnow().isoformat() + "Z",
-        "configuredTargetSize": result.configured_target_size,
-        "effectiveTargetSize": result.effective_target_size,
-        "tracks": [_serialize_track(track) for track in result.tracks],
-    }
+    _store_proposal(
+        manifest,
+        result.random_seed,
+        result.configured_target_size,
+        [_serialize_track(track) for track in result.tracks],
+    )
     manifest.accepted_desired_hash = desired_hash(list(result.video_ids))
     db.flush()
 
@@ -165,9 +190,7 @@ def plan_playlist(
     body_out = _serialize_plan(result)
     body_out["status"] = "READY" if result.passed else "SKIPPED_QUALITY"
     if not result.passed:
-        body_out["reasonCode"] = (
-            "INSUFFICIENT_POOL" if result.effective_target_size == 0 else "QUALITY_GATE_FAILED"
-        )
+        body_out["reasonCode"] = _reason_code(result)
     return body_out
 
 
@@ -218,11 +241,7 @@ def setup_playlists(
                 {
                     "kind": kind,
                     "status": "SKIPPED_QUALITY",
-                    "reasonCode": (
-                        "INSUFFICIENT_POOL"
-                        if desired_result.effective_target_size == 0
-                        else "QUALITY_GATE_FAILED"
-                    ),
+                    "reasonCode": _reason_code(desired_result),
                     **_serialize_plan(desired_result),
                 }
             )
@@ -316,12 +335,26 @@ def publish(
     db: Session = Depends(get_session),
     catalog: MusicCatalogPort = Depends(catalog_dep),
 ) -> dict[str, Any]:
+    lock = _WRITE_LOCKS[kind]
+    if not lock.acquire(blocking=False):
+        raise errors.JobAlreadyRunning("this playlist is already being updated")
+    try:
+        body = _publish(kind, db, catalog)
+        db.commit()
+        return body
+    finally:
+        lock.release()
+
+
+def _publish(kind: Kind, db: Session, catalog: MusicCatalogPort) -> dict[str, Any]:
     _guard_budget(db)
     manifest = _manifest(db, kind)
     if manifest.playlist_id is None:
         raise errors.PlaylistUnverified("playlist has no verified remote id yet")
 
     now = utcnow()
+    if write_in_progress(db, manifest, now):
+        raise errors.JobAlreadyRunning("another write of this playlist is still in progress")
     if manifest.next_publish_after is not None and manifest.next_publish_after > now:
         raise errors.LocalBudgetExceeded(
             "the daily publish window has not opened yet",
@@ -361,6 +394,96 @@ def publish(
         raise map_integration_error(exc) from exc
 
     return _serialize_publication(publication)
+
+
+def _reason_code(result: DesiredListResult) -> str:
+    return "INSUFFICIENT_POOL" if result.effective_target_size == 0 else "QUALITY_GATE_FAILED"
+
+
+def _posted_track(known: dict[str, Any], track: Any) -> dict[str, Any]:
+    if track.video_id in known:
+        return _serialize_track(known[track.video_id])
+    return {
+        "videoId": track.video_id,
+        "title": track.title,
+        "artists": [artist.name for artist in track.artists],
+        "familiarity": "DISCOVERY",
+        "reasonCodes": [],
+    }
+
+
+@router.post("/{kind}/regenerate")
+def regenerate(
+    kind: Kind,
+    db: Session = Depends(get_session),
+    catalog: MusicCatalogPort = Depends(catalog_dep),
+) -> dict[str, Any]:
+    lock = _WRITE_LOCKS[kind]
+    if not lock.acquire(blocking=False):
+        raise errors.JobAlreadyRunning("this playlist is already being updated")
+    try:
+        return _regenerate(kind, db, catalog)
+    finally:
+        lock.release()
+
+
+def _regenerate(kind: Kind, db: Session, catalog: MusicCatalogPort) -> dict[str, Any]:
+    _guard_budget(db)
+    manifest = _manifest(db, kind)
+    if manifest.status != "ACTIVE" or manifest.playlist_id is None:
+        raise errors.PlaylistUnverified("only an ACTIVE playlist can be regenerated")
+    now = utcnow()
+    if write_in_progress(db, manifest, now):
+        raise errors.JobAlreadyRunning("another write of this playlist is still in progress")
+    try:
+        CallBudget(db, now).check_regenerate(
+            manifest.playlist_id, sibling_reads=len(active_siblings(db, manifest))
+        )
+    except BudgetExceeded as exc:
+        raise errors.LocalBudgetExceeded(str(exc), budget=exc.budget, limit=exc.limit) from exc
+
+    try:
+        outcome = regenerate_contents(
+            db,
+            manifest,
+            catalog,
+            lambda: build_desired_list(db, kind, random_seed=random.randrange(2**31)),
+            now=now,
+        )
+    except OwnershipError as exc:
+        raise errors.PlaylistNotManaged(str(exc)) from exc
+    except IntegrationError as exc:
+        db.commit()
+        raise map_integration_error(exc) from exc
+
+    body: dict[str, Any] = {
+        "kind": kind,
+        "status": outcome.status,
+        "errorCode": outcome.error_code,
+        "ratingsApplied": outcome.ratings_applied,
+        "added": outcome.added,
+        "removed": outcome.removed,
+        "removedDisliked": outcome.removed_disliked,
+        "removedAfterWrite": outcome.removed_after_write,
+        "publicationId": outcome.publication.publication_id if outcome.publication else None,
+        "tracks": [],
+    }
+    if outcome.desired is not None and outcome.status == "SKIPPED_QUALITY":
+        body.update(_serialize_plan(outcome.desired))
+        body["tracks"] = []
+        body["reasonCode"] = _reason_code(outcome.desired)
+    if outcome.status == "COMPLETE" and outcome.desired is not None:
+        known = {track.video_id: track for track in outcome.desired.tracks}
+        body["tracks"] = [_posted_track(known, track) for track in outcome.posted]
+        body["effectiveTargetSize"] = len(outcome.posted)
+        _store_proposal(
+            manifest,
+            outcome.desired.random_seed,
+            outcome.desired.configured_target_size,
+            body["tracks"],
+        )
+        db.flush()
+    return body
 
 
 def _serialize_publication(publication: PlaylistPublication) -> dict[str, Any]:

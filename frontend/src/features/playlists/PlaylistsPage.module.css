@@ -187,6 +187,12 @@
   border-top: 1px solid var(--border-soft);
 }
 
+.actions > button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+}
+
 .warnBlock {
   margin-top: var(--space-2);
 }

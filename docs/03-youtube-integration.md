@@ -74,15 +74,15 @@ The adapter must:
 | Account check | `get_account_info()` | on startup and reconnect |
 | Likes | `get_liked_songs()` | no more than once every 6 hours |
 | Playlists | `get_library_playlists()` | no more than once every 6 hours |
-| Playlist contents | `get_playlist()` | TTL 6 hours; a fresh read is mandatory before publish |
-| Available history | `get_history()` | no more than once every 6 hours; auxiliary signal only |
+| Playlist contents | `get_playlist()` | TTL 6 hours; a fresh read is mandatory before publish; item `likeStatus` is applied locally (section 6) |
+| Available history | `get_history()` | no more than once every 6 hours; auxiliary signal; item `likeStatus` is applied locally (section 6) |
 | Search | `search()` | only on an explicit action, 400 ms debounce, TTL 24 hours |
 | Related tracks | `get_song_related()` | a seed is not re-queried for 7 days; the retrieved edges remain in the graph |
 | Radio/queue | `get_watch_playlist(..., radio=True)` | a seed is not re-queried for 7 days; the retrieved edges remain in the graph |
 | Mood sources | `get_mood_categories()`, `get_mood_playlists()` | TTL 30 days/7 days |
 | Like/dislike | `rate_song()` | state changes only, debounce/idempotency |
 | Creation | `create_playlist(..., video_ids=desired)` | only a confirmed initial managed setup |
-| Modification | `add_playlist_items()`, `remove_playlist_items()`, `edit_playlist()` | publish job |
+| Modification | `add_playlist_items()`, `remove_playlist_items()`, `edit_playlist()` | incremental publish; `add_playlist_items(..., duplicates=True)` + `remove_playlist_items()` for the explicit regenerate (section 8) |
 | Deletion | `delete_playlist(playlistId)` | only an explicitly confirmed deletion of one's own managed playlist after a fresh marker check |
 
 Uploading music, and deleting other people's playlists and ordinary user entities, are out of scope. The only exception is deleting one's own managed playlist (UNVERIFIED, CLEANUP_REQUIRED or ACTIVE) with the exact ID, a fresh ownership marker and a separate confirmation: these are the listener's playlists, and they are protected by the marker, not by the status.
@@ -96,9 +96,10 @@ Synchronisation is snapshot-oriented:
 3. Fetch the likes and the playlist list.
 4. Normalise tracks by `videoId`; store entries without a `videoId` as metadata-only and do not place them in the queue.
 5. Upsert remote entities without deleting local telemetry.
-6. For disappeared objects, set `remote_deleted_at` rather than physically deleting them.
-7. Save the watermark and counts.
-8. Finish with SUCCESS or FAILED with a safe short error code.
+6. Apply the like status of the history items (see section 6).
+7. For disappeared objects, set `remote_deleted_at` rather than physically deleting them.
+8. Save the watermark and counts.
+9. Finish with SUCCESS or FAILED with a safe short error code.
 
 The YouTube Music history is not used to infer "the user skipped a track": it has no reliable listening duration. It only raises recency/fatigue and confirms that a track was recently played outside Tuner.
 
@@ -109,6 +110,23 @@ The UI first records the explicit event locally. There is one mutable command pe
 Before the call, the worker reads the newest revision. After the external response it marks the rating as synchronised only if the revision still matches. If the user managed to change the state while the job was RUNNING, the completed operation does not confirm the new state: after the dedupe key is released, a successor job with the latest payload is created/resumed. This way a like → dislike sequence never leaves a stale like as the final state.
 
 A failure of the external write does not roll back the local behaviour event, but the UI shows `not synced`. The retry reads the current desired state again, not the payload of the initial attempt.
+
+### Ratings set in YouTube Music
+
+A like or dislike can also be set outside Tuner — typically on the phone while listening to a Tuner playlist. Tuner reads them back from the responses it already receives; no extra call is made for this:
+
+- every `get_playlist` item and every `get_history` item carries `likeStatus` with a real tri-state `LIKE`/`DISLIKE`/`INDIFFERENT` — these are the only trusted sources;
+- `get_watch_playlist`, `get_song_related`, `search` and `get_liked_songs` are **not** used for this: the watch payload reports a disliked track as `INDIFFERENT`, so reading it would erase real dislikes.
+
+Application rules, per track that exists in the local catalogue:
+
+- `DISLIKE` → local dislike (the like, if any, is cleared);
+- `LIKE` → local like (a dislike, if any, is cleared);
+- `INDIFFERENT` read from a playlist → clears a local dislike only; likes stay governed by the liked-songs sync. A history read never clears anything: it only adds likes and dislikes;
+- a rated track that is not in the local catalogue yet is stored first — the dislike of a canonical id must exist locally to block its twin (docs/05 section 4);
+- a track whose local rating is not `SYNCED`, or whose rating reached YouTube (or was adopted from it) less than 10 minutes before the read started, is left alone — the newer action wins over a possibly stale read. The liked-songs sync follows the same rule for tracks with a pending local rating.
+
+An applied remote rating is recorded as already synchronised: nothing is written back to YouTube.
 
 ## 7. Candidate generation without API spam
 
@@ -163,7 +181,7 @@ Cleanup calls `delete_managed_playlist(playlist_id, expected_marker)`. The port 
 The publish algorithm:
 
 1. Acquire the lease and check the daily cooldown.
-2. If a PARTIAL publication exists, continue its fixed desired snapshot; a newer generation waits and does not change the moving target. This continuation does not require 15 new sessions or a new rating, but runs only in the next 24-hour window. A new explicit dislike/block or the unavailability of a target item invalidates the plan before the next write.
+2. If a PARTIAL publication exists, continue its fixed desired snapshot; a newer generation waits and does not change the moving target. This continuation does not require 15 new sessions or a new rating, but runs only in the next 24-hour window. A new explicit dislike/block (including one read from the fresh snapshot in step 3) or the unavailability of a target item invalidates the plan before the next write: the PARTIAL is closed as `FAILED/DESIRED_INVALIDATED` and nothing is written.
 3. Fetch a fresh remote snapshot and make sure that the playlist is registered, the marker matches, and the remote hash corresponds to the last verified intermediate state.
 4. Save a full backup of the current order.
 5. For a new cycle only, check the trigger of 15 new qualified sessions/a changed rating, build the desired list with an adaptive `effective_target_size`, and check all playlist quality gates. For PARTIAL, use the stored desired list and re-check the hard/safety gates.
@@ -173,7 +191,21 @@ The publish algorithm:
 9. Apply the selected remove/add/move; status WRITING. Re-read the playlist; status VERIFYING.
 10. If the remote matched the expected intermediate snapshot but not yet the desired one, save PARTIAL and continue the same plan in the next publish window. On a full match — COMPLETE. In both cases the comparison tolerates positional id canonicalisation (the same substitution "a different id of the same song at the same position" as in setup-verify, up to 10% of the list): YouTube may store a track inserted by the plan under a canonical id, and without the tolerance every publication of such a list would fail with VERIFICATION_MISMATCH (observed live on 2026-08-09 on Familiar and Discovery). `verification_hash`/`expected_intermediate_hash` record the actual remote, so the continuations are self-consistent. Any discrepancy beyond the tolerance — FAILED without a blind retry.
 
-Fixing the desired snapshot guarantees convergence: even if a new recommendation has already been computed, an unfinished plan does not chase a daily-changing target. In the worst case a complex reordering converges over several 24-hour windows; the scheduler continues PARTIAL without a new listening signal, and the UI displays the remaining item changes, requests and target generation.
+Fixing the desired snapshot guarantees convergence: even if a new recommendation has already been computed, an unfinished plan does not chase a daily-changing target. In the worst case a complex reordering converges over several 24-hour windows. There is no scheduler job that continues a PARTIAL: each fragment is started by an explicit publish, and the UI displays the remaining item changes and requests.
+
+### Explicit regenerate: `Regenerate & update on YouTube`
+
+The incremental path above needs about four days and four manual presses to replace a 60-track list. For an ACTIVE playlist the owner therefore has one explicit, confirmed action that regenerates the selection and replaces the contents in one go (owner decision 2026-10-15, ADR-005):
+
+1. Check the circuit, that no other write of this playlist is in progress (an in-process lock plus a PLANNED/WRITING/VERIFYING publication younger than 10 minutes), that the playlist's budget (17 requests per rolling 24 hours) has room for 6 requests and the global budget (51 per day) for 6 plus one read per other ACTIVE Tuner playlist.
+2. Fresh `get_playlist(limit=None)`; apply the `likeStatus` of its items (section 6) — the rating is account-wide, so it is kept even if the marker check that follows fails; check the ownership marker. Then read the other ACTIVE Tuner playlists and apply theirs too: `likeStatus` is the owner's rating of the track, not of the playlist, so a dislike made while listening to Discovery must keep the track out of Balance. A failed read of another playlist is skipped, except an authentication or rate-limit refusal, which stops the action before any write. Commit — what was learned survives any later failure.
+3. Build a new desired list with a random seed from all local behaviour. A dislike or veto — including the ones just read — never enters it. If the gates fail, nothing is written and the result is `SKIPPED_QUALITY`.
+4. Close any PARTIAL as `FAILED/SUPERSEDED_BY_REGENERATE`, store a backup of the current contents (unless the playlist is empty), save the publication as PLANNED and commit before the first write.
+5. One `add_playlist_items(playlistId, desired, duplicates=True)`: YouTube appends the new list in exactly this order, duplicates of tracks that stay included. Then one `remove_playlist_items` with the `setVideoId`s of all previous items. Both responses must report `STATUS_SUCCEEDED`. The order add → remove means the playlist is never empty: a failed add changes nothing, a failed remove leaves old + new and the next regenerate cleans it up. Verified live on a throwaway private playlist on 2026-10-15.
+6. Verification read (up to two attempts), apply its `likeStatus` too. It must equal the desired list up to positional id canonicalisation, or — judged on the last attempt only, so a lagging read gets its retry — contain no duplicates, in any order, with at most 10% (none for lists under ten) of the desired ids missing and at most 10% foreign ids; otherwise `FAILED/VERIFICATION_MISMATCH`. Both happen live: on 2026-10-15 YouTube stored two of sixty Discovery tracks under canonical ids of the same songs and silently dropped a third. If the verification read shows a written track as disliked — a dislike Tuner could not have known before the write — one more `remove_playlist_items` takes those tracks out (`FAILED/CLEANUP_FAILED` if YouTube refuses). The actual remote list is then adopted as the accepted hash and the result is COMPLETE. A failure after the first write is recorded and returned as a result, never as a rolled-back error: `ADD_FAILED` (YouTube refused the add — nothing changed), `ADD_OUTCOME_UNKNOWN` (no answer — the add may have happened), `REMOVE_FAILED_AFTER_ADD`, `VERIFY_READ_FAILED`, `VERIFICATION_MISMATCH`, `CLEANUP_FAILED`.
+7. Record `last_published_at`, push `next_publish_after` 24 hours ahead for the incremental path, remember the posted list for display.
+
+The 15-item cap and the 24-hour cooldown do not apply to this action; the request budgets, the circuit breaker and the marker check do.
 
 Rollback is a separate manual operation from the backup. An automatic rollback could aggravate a partially successful write and therefore is not started without a check.
 
@@ -187,9 +219,10 @@ This is not an official quota but an application safeguard:
 | Candidate refresh | 1 per day, at most 6 seeds |
 | Graph frontier expansion | every 6 hours, at most 12 nodes per run (1 radio call each) |
 | All discovery calls (`get_watch_playlist`, `get_song_related`) | at most 120 per day in total; graph expansion never displaces publishing |
-| Remote publish | 1 publish window per day |
+| Remote publish (incremental `Refresh`) | 1 publish window per day |
+| Explicit `Regenerate & update on YouTube` | up to 6 playlist-endpoint requests on the playlist (fresh read, 1 batch add, 1 batch remove, up to 2 verify reads, 1 cleanup remove) plus one read of each other ACTIVE Tuner playlist; allowed only while the playlist's rolling 24-hour budget of 17 has room for 6 and the global 51 per day for all of them |
 | Initial creation of a managed playlist | one confirmed create with at most `configured_target_size` initial IDs and up to three verify reads; at most 4 playlist-endpoint requests per playlist |
-| Subsequent item changes of one managed playlist | at most 15 logical item changes per window |
+| Subsequent item changes of one managed playlist | at most 15 logical item changes per window (incremental path only) |
 | Subsequent mutating requests of one managed playlist | at most 15 per window; batch add/remove = 1 request, move = 1 request |
 | All playlist-endpoint requests of one managed playlist | at most 17 per window: 1 fresh read + up to 15 mutations + 1 verify read |
 | Global automatic playlist budget | at most 51 playlist-endpoint requests per day for the three managed playlists; jobs run sequentially |

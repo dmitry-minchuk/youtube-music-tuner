@@ -31,6 +31,8 @@ export interface TunerPlaylistDto {
   contentUpdatedAt: string | null;
   autoPublishEnabled: boolean;
   setupErrorCode: string | null;
+  lastWriteStatus: string | null;
+  lastWriteErrorCode: string | null;
 }
 
 export interface RemotePlaylistDto {

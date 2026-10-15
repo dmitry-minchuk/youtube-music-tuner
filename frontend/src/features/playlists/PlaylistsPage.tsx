@@ -5,12 +5,13 @@ import {
   describeGate,
   useDeleteSetupArtifact,
   usePlanPlaylist,
-  usePublishPlaylist,
   useReconcilePlaylist,
+  useRegeneratePlaylist,
   useSetupPlaylists,
   type Kind,
   type PlanResponse,
   type PlanTrack,
+  type RegenerateResponse,
   type SetupResult,
 } from "@/api/publishing";
 import { usePlayerStore } from "@/player/playerStore";
@@ -49,7 +50,7 @@ function publishError(error: unknown): string {
       const next = error.body.nextAllowedAt;
       return typeof next === "string"
         ? `The daily publish window opens at ${new Date(next).toLocaleString()}.`
-        : "The publish budget for today is used up.";
+        : "Today's YouTube request budget for this playlist is used up — it frees up gradually over 24 hours.";
     }
     if (error.code === "PLAYLIST_QUALITY_FAILED") {
       const failures = (error.body.gateFailures as string[] | undefined) ?? [];
@@ -57,10 +58,63 @@ function publishError(error: unknown): string {
     }
     if (error.code === "PLAYLIST_UNVERIFIED") return "Verify the playlist before publishing.";
     if (error.code === "PLAYLIST_NOT_MANAGED") return "Tuner does not own that playlist.";
+    if (error.code === "JOB_ALREADY_RUNNING") return "This playlist is already being updated.";
     if (error.code === "REMOTE_CHANGED") return "The playlist changed remotely; nothing was written.";
     return error.message;
   }
   return "Could not reach the local API.";
+}
+
+const REGENERATE_FAILURES: Record<string, string> = {
+  ADD_FAILED: "YouTube did not accept the new tracks — the playlist was not changed.",
+  ADD_OUTCOME_UNKNOWN:
+    "YouTube did not answer while the new tracks were being added — check the playlist, then press the button again in a minute.",
+  REMOVE_FAILED_AFTER_ADD:
+    "The new tracks were added, but the old ones could not be removed — wait a minute and press the button again to finish.",
+  CLEANUP_FAILED:
+    "Updated, but some tracks you had disliked could not be taken out again — wait a minute and press the button again.",
+  VERIFY_READ_FAILED:
+    "The update was sent, but the playlist could not be read back to confirm it — check it in YouTube Music.",
+  VERIFICATION_MISMATCH:
+    "YouTube stored something different from what was sent — check the playlist in YouTube Music.",
+};
+
+function regenerateOutcome(result: RegenerateResponse): string {
+  if (result.status === "COMPLETE") {
+    const disliked = result.removedDisliked
+      ? ` (${result.removedDisliked} of them you had disliked or blocked)`
+      : "";
+    const afterWrite = result.removedAfterWrite
+      ? ` ${result.removedAfterWrite} more turned out to be disliked and were taken out right away.`
+      : "";
+    return `Updated on YouTube: ${result.tracks.length} tracks · ${result.added} new · ${result.removed} removed${disliked}.${afterWrite}`;
+  }
+  if (result.status === "SKIPPED_QUALITY") {
+    if (result.reasonCode === "INSUFFICIENT_POOL") {
+      return `Not enough material for a new selection yet (${result.availableFamiliar ?? 0} familiar and ${result.availableDiscovery ?? 0} discovery tracks pass the quality bar). The playlist was not changed.`;
+    }
+    const failures = result.gateFailures ?? [];
+    return `The new selection did not pass the quality checks${
+      failures.length ? `: ${failures.map(describeGate).join("; ")}` : ""
+    }. The playlist was not changed.`;
+  }
+  return (
+    REGENERATE_FAILURES[result.errorCode ?? ""] ??
+    `The update failed (${result.errorCode ?? "unknown error"}).`
+  );
+}
+
+function lastWriteProblem(playlist: TunerPlaylistDto): string | null {
+  if (playlist.lastWriteStatus !== "FAILED" || !playlist.lastWriteErrorCode) return null;
+  const text = REGENERATE_FAILURES[playlist.lastWriteErrorCode];
+  return text ? `Last update: ${text}` : null;
+}
+
+function ratingsNote(result: RegenerateResponse): string | null {
+  if (!result.ratingsApplied) return null;
+  return result.ratingsApplied === 1
+    ? "Picked up 1 like/dislike you set in YouTube Music."
+    : `Picked up ${result.ratingsApplied} likes/dislikes you set in YouTube Music.`;
 }
 
 /** YouTube omits the size of its own system playlists — that is not zero. */
@@ -116,14 +170,49 @@ function PlanSummary({ plan }: { plan: PlanResponse }): React.JSX.Element {
   );
 }
 
+function TrackList({
+  tracks,
+  onPlay,
+}: {
+  tracks: PlanTrack[];
+  onPlay: (from: number) => void;
+}): React.JSX.Element {
+  return (
+    <ol className={styles.trackList}>
+      {tracks.map((track, index) => (
+        <li key={`${track.videoId}-${index}`}>
+          <button
+            type="button"
+            className={styles.trackRow}
+            onClick={() => onPlay(index)}
+            title="Play from here"
+          >
+            <span className={styles.trackIndex}>{index + 1}</span>
+            <span className={styles.trackTitle}>{track.title}</span>
+            <span className={styles.trackArtist}>{track.artists.join(", ")}</span>
+            <span
+              className={
+                track.familiarity === "FAMILIAR" ? styles.tagFamiliar : styles.tagDiscovery
+              }
+            >
+              {track.familiarity === "FAMILIAR" ? "known" : "new"}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.JSX.Element {
   const kind = playlist.kind;
   const plan = usePlanPlaylist();
-  const publish = usePublishPlaylist();
+  const regenerate = useRegeneratePlaylist();
   const reconcile = useReconcilePlaylist();
   const remove = useDeleteSetupArtifact();
   const setup = useSetupPlaylists();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
   const setQueue = usePlayerStore((store) => store.setQueue);
   const playIndex = usePlayerStore((store) => store.playIndex);
 
@@ -131,14 +220,15 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
   // An intent without a remote id has nothing to verify or adopt — the only
   // way forward is creating the playlist (setup is idempotent, docs/03 s.8).
   const needsCreation = playlist.status === "CREATING" && playlist.playlistId === null;
-  const previewTracks = plan.data?.status === "READY" ? plan.data.tracks : [];
+  const previewTracks = !isActive && plan.data?.status === "READY" ? plan.data.tracks : [];
+  const postedTracks = regenerate.data?.status === "COMPLETE" ? regenerate.data.tracks : [];
 
   // Anything that leaves the machine (or ranks 360 tracks) takes visible
   // time: a moving bar says "working", a frozen button says "hung".
   const busyLabel = plan.isPending
     ? "Building the preview — ranking the whole pool…"
-    : publish.isPending
-      ? "Refreshing the playlist on YouTube…"
+    : regenerate.isPending
+      ? "Reading your likes and dislikes from YouTube Music, building a new selection and replacing the playlist on YouTube…"
       : setup.isPending
         ? "Creating on YouTube and verifying…"
         : reconcile.isPending
@@ -186,70 +276,49 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
           {playlist.setupErrorCode ? ` Last error: ${playlist.setupErrorCode}.` : ""}
         </p>
       )}
-      {plan.data && <PlanSummary plan={plan.data} />}
+      {!isActive && plan.data && <PlanSummary plan={plan.data} />}
       {previewTracks.length > 0 && (
         <div className={styles.preview}>
           <div className={styles.previewHead}>
-            <span className={styles.meta}>
-              {previewTracks.length} tracks
-              {plan.data?.generatedAt
-                ? ` · reviewed ${new Date(plan.data.generatedAt).toLocaleTimeString()}`
-                : ""}
-            </span>
+            <span className={styles.meta}>{previewTracks.length} tracks</span>
             <div className={styles.previewActions}>
               <Button onClick={() => playPreview(previewTracks)}>Play</Button>
               <Button
                 onClick={() => plan.mutate({ kind, regenerate: true })}
                 disabled={plan.isPending}
               >
-                {plan.isPending ? "Rebuilding…" : "Regenerate"}
+                {plan.isPending ? "Rebuilding…" : "Another variant"}
               </Button>
             </div>
           </div>
-          <ol className={styles.trackList}>
-            {previewTracks.map((track, index) => (
-              <li key={track.videoId}>
-                <button
-                  type="button"
-                  className={styles.trackRow}
-                  onClick={() => playPreview(previewTracks, index)}
-                  title="Play from here"
-                >
-                  <span className={styles.trackIndex}>{index + 1}</span>
-                  <span className={styles.trackTitle}>{track.title}</span>
-                  <span className={styles.trackArtist}>{track.artists.join(", ")}</span>
-                  <span
-                    className={
-                      track.familiarity === "FAMILIAR"
-                        ? styles.tagFamiliar
-                        : styles.tagDiscovery
-                    }
-                  >
-                    {track.familiarity === "FAMILIAR" ? "known" : "new"}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ol>
+          <TrackList tracks={previewTracks} onPlay={(from) => playPreview(previewTracks, from)} />
         </div>
       )}
 
-      {publish.data && (
-        <p className={styles.meta}>
-          {publish.data.status === "COMPLETE"
-            ? "Refreshed and verified."
-            : publish.data.status === "PARTIAL"
-              ? `Partially applied — ${publish.data.remainingItemChanges} changes and ${publish.data.remainingEstimatedRequests} requests remain; continues after ${
-                  publish.data.nextContinuationAfter
-                    ? new Date(publish.data.nextContinuationAfter).toLocaleString()
-                    : "the next window"
-                }.`
-              : `Refresh ${publish.data.status.toLowerCase()}${
-                  publish.data.errorCode ? ` (${publish.data.errorCode})` : ""
-                }.`}
+      {regenerate.data && (
+        <p
+          className={regenerate.data.status === "COMPLETE" ? styles.meta : styles.warn}
+          role="status"
+        >
+          {regenerateOutcome(regenerate.data)}
+          {ratingsNote(regenerate.data) ? ` ${ratingsNote(regenerate.data)}` : ""}
         </p>
       )}
-      {publish.isError && <p className={styles.warn}>{publishError(publish.error)}</p>}
+      {regenerate.isError && <p className={styles.warn}>{publishError(regenerate.error)}</p>}
+      {!regenerate.data && !regenerate.isPending && lastWriteProblem(playlist) && (
+        <p className={styles.warn}>{lastWriteProblem(playlist)}</p>
+      )}
+      {postedTracks.length > 0 && (
+        <div className={styles.preview}>
+          <div className={styles.previewHead}>
+            <span className={styles.meta}>Now on YouTube · {postedTracks.length} tracks</span>
+            <div className={styles.previewActions}>
+              <Button onClick={() => playPreview(postedTracks)}>Play</Button>
+            </div>
+          </div>
+          <TrackList tracks={postedTracks} onPlay={(from) => playPreview(postedTracks, from)} />
+        </div>
+      )}
 
       {busyLabel && <Busy label={busyLabel} />}
       {reconcile.data && !busyLabel && (
@@ -261,22 +330,38 @@ function TunerPlaylistCard({ playlist }: { playlist: TunerPlaylistDto }): React.
       {reconcile.isError && <p className={styles.warn}>{publishError(reconcile.error)}</p>}
       {setup.isError && <p className={styles.warn}>{publishError(setup.error)}</p>}
 
+      {isActive && (
+        <p className={styles.meta}>
+          Regenerate &amp; update on YouTube picks up the likes and dislikes you set in YouTube
+          Music on the Tuner playlists, builds a new selection from all your listening and
+          replaces this playlist&apos;s tracks on YouTube.
+        </p>
+      )}
       <div className={styles.actions}>
-        <Button onClick={() => plan.mutate({ kind })} disabled={plan.isPending}>
-          {plan.isPending ? "Checking…" : plan.data ? "Refresh preview" : "Preview"}
-        </Button>
-        {isActive && (
-          <Button
-            variant="primary"
-            onClick={() => publish.mutate(kind)}
-            disabled={publish.isPending || !plan.data}
-            title={
-              plan.data
-                ? "The playlist is already on YouTube — this applies the reviewed selection to it, changing only what differs"
-                : "Preview the selection before applying it"
-            }
-          >
-            {publish.isPending ? "Refreshing…" : "Refresh content"}
+        {isActive &&
+          (confirmingRegenerate ? (
+            <Button
+              variant="primary"
+              onClick={() => {
+                regenerate.mutate(kind);
+                setConfirmingRegenerate(false);
+              }}
+              disabled={regenerate.isPending}
+            >
+              {`Replace the tracks of ${KIND_LABELS[kind]} on YouTube — confirm`}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={() => setConfirmingRegenerate(true)}
+              disabled={regenerate.isPending}
+            >
+              {regenerate.isPending ? "Updating…" : "Regenerate & update on YouTube"}
+            </Button>
+          ))}
+        {!isActive && (
+          <Button onClick={() => plan.mutate({ kind })} disabled={plan.isPending}>
+            {plan.isPending ? "Checking…" : plan.data ? "Refresh preview" : "Preview"}
           </Button>
         )}
         {needsCreation && (
@@ -331,7 +416,7 @@ export function PlaylistsPage(): React.JSX.Element {
       <div className={styles.stack}>
         <Panel
           title="Tuner playlists"
-          description="Created already filled with a full selection; Refresh re-applies your current taste later, changing only what differs. Private and never touched without a preview."
+          description="Created already filled with a full selection. Regenerate & update on YouTube rebuilds a playlist from all your listening and replaces it. Private; Tuner never touches playlists it did not create."
           actions={
             data && data.tunerPlaylists.length < 3 ? (
               <Button

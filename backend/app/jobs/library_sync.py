@@ -80,8 +80,12 @@ def run_library_sync(
 
         history_count = 0
         if include_history:
+            history_read_started = utcnow()
             history = catalog.history()
             history_count = repo.record_history(session, history, now)
+            repo.apply_remote_ratings(
+                session, [item.track for item in history], history_read_started
+            )
 
         run.status = "SUCCESS"
         run.liked_count = len(liked_ids)

@@ -37,6 +37,10 @@ class ParseError(IntegrationError):
     code = "YTM_PARSE_ERROR"
 
 
+class WriteRejected(IntegrationError):
+    code = "YTM_WRITE_REJECTED"
+
+
 class Unavailable(IntegrationError):
     code = "YTM_UNAVAILABLE"
     retryable = True

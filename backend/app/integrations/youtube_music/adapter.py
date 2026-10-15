@@ -35,6 +35,7 @@ from app.integrations.youtube_music.errors import (
     RateLimited,
     RemoteChanged,
     Unavailable,
+    WriteRejected,
 )
 from app.settings import Settings
 
@@ -82,9 +83,14 @@ def classify_exception(exc: Exception) -> IntegrationError:
     return Unavailable("YouTube Music call failed")
 
 
-class YouTubeMusicAdapter:
-    """Implements :class:`MusicCatalogPort` on top of ytmusicapi 1.12.1."""
+def _require_succeeded(result: Any) -> Any:
+    status = result.get("status") if isinstance(result, dict) else result
+    if isinstance(status, str) and "SUCCEEDED" in status:
+        return result
+    raise WriteRejected("YouTube Music did not confirm the playlist edit")
 
+
+class YouTubeMusicAdapter:
     def __init__(
         self,
         settings: Settings,
@@ -96,14 +102,9 @@ class YouTubeMusicAdapter:
         self._client_factory = client_factory or self._build_client
         self._client: Any | None = None
 
-    # -- client -----------------------------------------------------------
-
     def _build_client(self) -> Any:
         from ytmusicapi import OAuthCredentials, YTMusic
 
-        # Browser headers first: YouTube Music rejects Bearer tokens issued to
-        # self-made OAuth clients with HTTP 400, so cookie auth is the path
-        # that actually works (docs/03 section 2).
         browser_path: Path = self._settings.browser_auth_file
         if browser_path.is_file():
             return YTMusic(str(browser_path))
@@ -135,8 +136,6 @@ class YouTubeMusicAdapter:
     def reset_client(self) -> None:
         self._client = None
 
-    # -- call plumbing ----------------------------------------------------
-
     def _call(
         self,
         operation: str,
@@ -160,7 +159,7 @@ class YouTubeMusicAdapter:
                 counts_against_automatic_budget,
             )
             raise
-        except Exception as exc:  # noqa: BLE001 - deliberately narrowed below
+        except Exception as exc:  # noqa: BLE001
             error = classify_exception(exc)
             if isinstance(error, AuthError):
                 self.reset_client()
@@ -215,8 +214,6 @@ class YouTubeMusicAdapter:
             counts_against_automatic_budget=counts_against_automatic_budget,
         )
 
-    # -- read operations --------------------------------------------------
-
     def account(self) -> Account:
         raw = self._call("get_account_info", lambda: self.client.get_account_info())
         return parsers.parse_account(raw)
@@ -253,7 +250,6 @@ class YouTubeMusicAdapter:
         return parsers.parse_watch_playlist(raw, CandidateSource.RADIO, video_id)
 
     def related(self, video_id: str) -> list[TrackCandidate]:
-        """Related needs the browseId that the watch playlist exposes."""
         watch = self._call(
             "get_watch_playlist",
             lambda: self.client.get_watch_playlist(videoId=video_id, radio=False, limit=1),
@@ -270,8 +266,6 @@ class YouTubeMusicAdapter:
             lambda: self.client.search(query, filter="songs", limit=limit),
         )
         return parsers.parse_search_results(raw)
-
-    # -- write operations -------------------------------------------------
 
     def rate_track(self, video_id: str, rating: Rating) -> None:
         from ytmusicapi import LikeStatus
@@ -300,29 +294,39 @@ class YouTubeMusicAdapter:
         )
         if isinstance(result, str) and result:
             return result
-        # A dict here means the request was rejected; the body is not logged.
         raise RemoteChanged("playlist creation did not return an id")
 
+    def append_playlist_items(self, playlist_id: str, video_ids: list[str]) -> None:
+        self._call(
+            "add_playlist_items",
+            lambda: _require_succeeded(
+                self.client.add_playlist_items(playlist_id, video_ids, duplicates=True)
+            ),
+            is_mutation=True,
+            playlist_id=playlist_id,
+        )
+
+    def remove_playlist_items(self, playlist_id: str, items: list[tuple[str, str]]) -> None:
+        videos = [
+            {"videoId": video_id, "setVideoId": set_video_id} for video_id, set_video_id in items
+        ]
+        self._call(
+            "remove_playlist_items",
+            lambda: _require_succeeded(self.client.remove_playlist_items(playlist_id, videos)),
+            is_mutation=True,
+            playlist_id=playlist_id,
+        )
+
     def apply_playlist_diff(self, plan: PlaylistDiffPlan) -> None:
-        """Apply removes, then adds, then moves — one request per move."""
         removals = [op for op in plan.operations if op.kind == "REMOVE"]
         additions = [op for op in plan.operations if op.kind == "ADD"]
         moves = [op for op in plan.operations if op.kind == "MOVE"]
 
         if removals:
-            videos = [
-                {"videoId": op.video_id, "setVideoId": op.set_video_id}
-                for op in removals
-                if op.set_video_id
-            ]
-            if len(videos) != len(removals):
+            items = [(op.video_id, op.set_video_id) for op in removals if op.set_video_id]
+            if len(items) != len(removals):
                 raise RemoteChanged("removal plan is missing setVideoId for some items")
-            self._call(
-                "remove_playlist_items",
-                lambda: self.client.remove_playlist_items(plan.playlist_id, videos),
-                is_mutation=True,
-                playlist_id=plan.playlist_id,
-            )
+            self.remove_playlist_items(plan.playlist_id, items)
 
         if additions:
             video_ids = [op.video_id for op in additions]
@@ -345,7 +349,6 @@ class YouTubeMusicAdapter:
             )
 
     def delete_managed_playlist(self, playlist_id: str, expected_marker: str) -> None:
-        """Fresh marker read, then exactly one delete (docs/03 section 8)."""
         snapshot = self._call(
             "get_playlist",
             lambda: self.client.get_playlist(playlist_id, limit=1),

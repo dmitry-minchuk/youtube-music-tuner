@@ -80,8 +80,6 @@ def track(video_id: str, title: str, artist: str = "Alpha", **kwargs: Any) -> Tr
 
 
 class FakeCatalog:
-    """Port-level fake for tests that do not exercise parsing."""
-
     def __init__(
         self,
         liked: list[Track] | None = None,
@@ -98,6 +96,8 @@ class FakeCatalog:
         self.ratings: list[tuple[str, Rating]] = []
         self.created: list[tuple[str, str, list[str]]] = []
         self.applied: list[PlaylistDiffPlan] = []
+        self.appended: list[tuple[str, list[str]]] = []
+        self.removed: list[tuple[str, list[tuple[str, str]]]] = []
         self.deleted: list[str] = []
         self.rate_error: Exception | None = None
         self.rate_hook = None
@@ -151,6 +151,12 @@ class FakeCatalog:
 
     def apply_playlist_diff(self, plan: PlaylistDiffPlan) -> None:
         self.applied.append(plan)
+
+    def append_playlist_items(self, playlist_id: str, video_ids: list[str]) -> None:
+        self.appended.append((playlist_id, list(video_ids)))
+
+    def remove_playlist_items(self, playlist_id: str, items: list[tuple[str, str]]) -> None:
+        self.removed.append((playlist_id, list(items)))
 
     def delete_managed_playlist(self, playlist_id: str, expected_marker: str) -> None:
         self.deleted.append(playlist_id)

@@ -4,6 +4,14 @@ The documents describe the target state of YouTube Music Tuner. The wording "mus
 
 Starting with revision 1.3, a significant part of the documents describes an already working system rather than a plan: the numbers given in the text were measured on a live library and are dated.
 
+## Revision 1.4 — 2026-10-15
+
+**Dislikes from YouTube Music.** Tuner wrote the owner's playlists back to YouTube but never read anything from them except the track list: 18 tracks the owner had disliked on the phone sat in the three playlists (35 entries), and every regeneration put them back. Ratings are now read from every playlist and history response (docs/03 section 6), and a dislike also covers the same song under another id (docs/05 section 4).
+
+**One clear action for an existing playlist.** `Preview`, `Refresh content` and `Regenerate` did not say which of them changed YouTube, and a full refresh took four days. An ACTIVE playlist now has one confirmed action, `Regenerate & update on YouTube`, which re-reads ratings, regenerates from all behaviour and replaces the contents in one go without ever emptying the playlist (docs/03 section 8, ADR-005).
+
+**Learning data.** Removing a like or dislike in the player was recorded as setting it; it no longer is (docs/04 section 3).
+
 ## Revision 1.3 — 2026-08-03
 
 The first weeks of real use revealed that the selection was weaker than described, and the weaknesses turned out to be structural rather than a matter of tuning.
@@ -49,7 +57,8 @@ After an end-to-end architectural review the following were clarified: clean bas
 - [ADR-001: use ytmusicapi](decisions/ADR-001-use-ytmusicapi.md);
 - [ADR-002: local recommender without a mandatory LLM](decisions/ADR-002-local-recommender-no-llm.md);
 - [ADR-003: one container and port 43127](decisions/ADR-003-single-container-port.md);
-- [ADR-004: candidate graph instead of a cached pool](decisions/ADR-004-candidate-graph-over-cached-pool.md).
+- [ADR-004: candidate graph instead of a cached pool](decisions/ADR-004-candidate-graph-over-cached-pool.md);
+- [ADR-005: explicit regenerate replaces a playlist in one action](decisions/ADR-005-explicit-regenerate-replaces-playlist.md).
 
 ## Maintenance rules
 

@@ -13,20 +13,28 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.catalog import PlaylistDiffPlan, RemotePlaylistSnapshot
-from app.integrations.youtube_music.errors import IntegrationError
+from app.domain.catalog import PlaylistDiffPlan, RemotePlaylistSnapshot, Track
+from app.integrations.youtube_music.errors import (
+    AuthError,
+    IntegrationError,
+    RateLimited,
+    WriteRejected,
+)
 from app.integrations.youtube_music.port import MusicCatalogPort
+from app.persistence import repositories as repo
 from app.persistence.models import (
     ManagedPlaylist,
     PlaylistBackup,
     PlaylistPublication,
     utcnow,
 )
+from app.publishing.desired_list import DesiredListResult
 from app.publishing.planner import (
     PlanSlice,
     RemoteItem,
@@ -35,6 +43,7 @@ from app.publishing.planner import (
     with_refreshed_set_video_ids,
 )
 from app.publishing.quality_gates import QUALITY_GATE_VERSION
+from app.recommender.wave import publishing_exclusions
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +79,20 @@ def matches_up_to_substitutions(actual: list[str], expected: list[str]) -> bool:
     return 0 < swapped <= len(expected) // SUBSTITUTION_TOLERANCE_DIVISOR
 
 
+def matches_composition(actual: list[str], expected: list[str]) -> bool:
+    if not expected or not actual or len(set(actual)) != len(actual):
+        return False
+    tolerance = len(expected) // SUBSTITUTION_TOLERANCE_DIVISOR
+    missing = len(set(expected) - set(actual))
+    foreign = len(set(actual) - set(expected))
+    return missing <= tolerance and foreign <= tolerance
+
+
 PUBLISH_WINDOW = dt.timedelta(hours=24)
 MAX_BACKUPS = 30
+WRITE_IN_PROGRESS_STATUSES = ("PLANNED", "WRITING", "VERIFYING")
+WRITE_IN_PROGRESS_WINDOW = dt.timedelta(minutes=10)
+REGENERATE_VERIFY_DELAYS: tuple[float, ...] = (0.0, 2.0)
 
 
 class OwnershipError(Exception):
@@ -197,7 +218,7 @@ def verify_setup(
         if attempt:
             sleep(delay)
         try:
-            snapshot = catalog.playlist(manifest.playlist_id)
+            snapshot, _ = read_playlist_ratings(db, catalog, manifest.playlist_id)
         except IntegrationError as exc:
             last_error = exc.code
             continue
@@ -360,6 +381,17 @@ def cleanup_setup_artifact(
     return "DELETED"
 
 
+def read_playlist_ratings(
+    db: Session, catalog: MusicCatalogPort, playlist_id: str
+) -> tuple[RemotePlaylistSnapshot, list[str]]:
+    started = utcnow()
+    snapshot = catalog.playlist(playlist_id)
+    changed = repo.apply_remote_ratings(
+        db, [item.track for item in snapshot.items], started, may_clear_dislikes=True
+    )
+    return snapshot, changed
+
+
 def require_writable(manifest: ManagedPlaylist) -> None:
     if manifest.status == "ACTIVE":
         return
@@ -462,12 +494,18 @@ def publish_window(
         db.add(publication)
         db.flush()
 
-    snapshot = catalog.playlist(manifest.playlist_id)
+    snapshot, _ = read_playlist_ratings(db, catalog, manifest.playlist_id)
     if not (snapshot.description and manifest.ownership_marker in snapshot.description):
         publication.status = "FAILED"
         publication.error_code = "MARKER_MISMATCH"
         db.flush()
         raise OwnershipError("remote ownership marker does not match")
+
+    if set(desired) & publishing_exclusions(db):
+        publication.status = "FAILED"
+        publication.error_code = "DESIRED_INVALIDATED"
+        db.flush()
+        return publication
 
     remote_items = snapshot_to_items(snapshot)
     current_hash = desired_hash([item.video_id for item in remote_items])
@@ -514,7 +552,7 @@ def publish_window(
     }
     db.flush()
 
-    verification = catalog.playlist(manifest.playlist_id)
+    verification, _ = read_playlist_ratings(db, catalog, manifest.playlist_id)
     verified_ids = list(verification.video_ids)
     verified_hash = desired_hash(verified_ids)
 
@@ -556,3 +594,214 @@ def publish_window(
 def _plan_from_slice(manifest: ManagedPlaylist, plan_slice: PlanSlice) -> PlaylistDiffPlan:
     assert manifest.playlist_id is not None
     return build_plan(manifest.playlist_id, manifest.ownership_marker, plan_slice.operations)
+
+
+@dataclass(slots=True)
+class RegenerateOutcome:
+    status: str
+    ratings_applied: int
+    desired: DesiredListResult | None = None
+    publication: PlaylistPublication | None = None
+    posted: list[Track] = field(default_factory=list)
+    added: int = 0
+    removed: int = 0
+    removed_disliked: int = 0
+    removed_after_write: int = 0
+    error_code: str | None = None
+
+
+def write_in_progress(db: Session, manifest: ManagedPlaylist, now: dt.datetime) -> bool:
+    row = db.scalar(
+        select(PlaylistPublication.publication_id)
+        .where(
+            PlaylistPublication.managed_playlist_id == manifest.managed_playlist_id,
+            PlaylistPublication.status.in_(WRITE_IN_PROGRESS_STATUSES),
+            PlaylistPublication.created_at >= now - WRITE_IN_PROGRESS_WINDOW,
+        )
+        .limit(1)
+    )
+    return row is not None
+
+
+def _fail(
+    db: Session, outcome: RegenerateOutcome, publication: PlaylistPublication, code: str
+) -> RegenerateOutcome:
+    publication.status = "FAILED"
+    publication.error_code = code
+    db.commit()
+    outcome.status = "FAILED"
+    outcome.error_code = code
+    return outcome
+
+
+def active_siblings(db: Session, manifest: ManagedPlaylist) -> list[ManagedPlaylist]:
+    return list(
+        db.scalars(
+            select(ManagedPlaylist).where(
+                ManagedPlaylist.managed_playlist_id != manifest.managed_playlist_id,
+                ManagedPlaylist.status == "ACTIVE",
+                ManagedPlaylist.playlist_id.is_not(None),
+            )
+        ).all()
+    )
+
+
+def _read_sibling_ratings(db: Session, manifest: ManagedPlaylist, catalog: MusicCatalogPort) -> int:
+    learned = 0
+    for sibling in active_siblings(db, manifest):
+        assert sibling.playlist_id is not None
+        try:
+            _, changed = read_playlist_ratings(db, catalog, sibling.playlist_id)
+        except (AuthError, RateLimited):
+            raise
+        except IntegrationError:
+            continue
+        learned += len(changed)
+    return learned
+
+
+def _written_as_planned(actual: list[str], desired: list[str]) -> bool:
+    return matches_up_to_substitutions(actual, desired) or matches_composition(actual, desired)
+
+
+def regenerate_contents(
+    db: Session,
+    manifest: ManagedPlaylist,
+    catalog: MusicCatalogPort,
+    build: Callable[[], DesiredListResult],
+    *,
+    sleep=time.sleep,
+    now: dt.datetime | None = None,
+) -> RegenerateOutcome:
+    now = now or utcnow()
+    require_writable(manifest)
+    assert manifest.playlist_id is not None
+    playlist_id = manifest.playlist_id
+
+    snapshot, changed = read_playlist_ratings(db, catalog, playlist_id)
+    if not (snapshot.description and manifest.ownership_marker in snapshot.description):
+        db.commit()
+        raise OwnershipError("remote ownership marker does not match")
+    db.commit()
+    learned = len(changed) + _read_sibling_ratings(db, manifest, catalog)
+    db.commit()
+
+    outcome = RegenerateOutcome(status="SKIPPED_QUALITY", ratings_applied=learned)
+    previous = [
+        (item.track.video_id, item.set_video_id)
+        for item in snapshot.items
+        if item.track.video_id and item.set_video_id
+    ]
+    previous_ids = [video_id for video_id, _ in previous]
+
+    result = build()
+    outcome.desired = result
+    excluded = publishing_exclusions(db)
+    desired = list(result.video_ids)
+    if not result.passed or set(desired) & excluded:
+        db.commit()
+        return outcome
+
+    partial = active_partial(db, manifest)
+    if partial is not None:
+        partial.status = "FAILED"
+        partial.error_code = "SUPERSEDED_BY_REGENERATE"
+
+    publication = PlaylistPublication(
+        publication_id=str(uuid.uuid4()),
+        managed_playlist_id=manifest.managed_playlist_id,
+        status="PLANNED",
+        quality_gate_version=QUALITY_GATE_VERSION,
+        configured_target_size=manifest.configured_target_size,
+        effective_target_size=len(desired),
+        remote_before_json={"videoIds": previous_ids},
+        desired_snapshot_json={"videoIds": desired},
+        desired_hash=desired_hash(desired),
+        created_at=now,
+    )
+    db.add(publication)
+    db.flush()
+    if snapshot.items:
+        store_backup(db, manifest, snapshot, publication.publication_id)
+    publication.status = "WRITING"
+    db.commit()
+
+    outcome.publication = publication
+    outcome.added = len(set(desired) - set(previous_ids))
+    outcome.removed = len(set(previous_ids) - set(desired))
+    outcome.removed_disliked = len((set(previous_ids) & excluded) - set(desired))
+
+    try:
+        catalog.append_playlist_items(playlist_id, desired)
+    except (WriteRejected, AuthError, RateLimited):
+        return _fail(db, outcome, publication, "ADD_FAILED")
+    except IntegrationError:
+        return _fail(db, outcome, publication, "ADD_OUTCOME_UNKNOWN")
+    if previous:
+        try:
+            catalog.remove_playlist_items(playlist_id, previous)
+        except IntegrationError:
+            return _fail(db, outcome, publication, "REMOVE_FAILED_AFTER_ADD")
+
+    publication.status = "VERIFYING"
+    publication.applied_operations_json = {"added": len(desired), "removed": len(previous)}
+    db.commit()
+
+    verification: RemotePlaylistSnapshot | None = None
+    verified_ids: list[str] | None = None
+    for attempt, delay in enumerate(REGENERATE_VERIFY_DELAYS):
+        if attempt:
+            sleep(delay)
+        try:
+            verification, _ = read_playlist_ratings(db, catalog, playlist_id)
+        except IntegrationError:
+            continue
+        verified_ids = list(verification.video_ids)
+        if matches_up_to_substitutions(verified_ids, desired):
+            break
+
+    if verification is None or verified_ids is None:
+        return _fail(db, outcome, publication, "VERIFY_READ_FAILED")
+
+    publication.verification_hash = desired_hash(verified_ids)
+    if not _written_as_planned(verified_ids, desired):
+        return _fail(db, outcome, publication, "VERIFICATION_MISMATCH")
+
+    rejected_ids = publishing_exclusions(db)
+    rejected = [
+        (item.track.video_id, item.set_video_id)
+        for item in verification.items
+        if item.track.video_id in rejected_ids and item.set_video_id
+    ]
+    if rejected:
+        try:
+            catalog.remove_playlist_items(playlist_id, rejected)
+        except IntegrationError:
+            return _fail(db, outcome, publication, "CLEANUP_FAILED")
+        outcome.removed_after_write = len(rejected)
+    gone = {set_id for _, set_id in rejected}
+    posted = [
+        item.track
+        for item in verification.items
+        if item.track.video_id and item.set_video_id not in gone
+    ]
+
+    publication.status = "COMPLETE"
+    publication.remaining_item_changes = 0
+    publication.remaining_estimated_requests = 0
+    publication.verification_hash = desired_hash([track.video_id or "" for track in posted])
+    manifest.accepted_desired_hash = publication.verification_hash
+    manifest.last_published_at = now
+    manifest.next_publish_after = now + PUBLISH_WINDOW
+    db.commit()
+    outcome.status = "COMPLETE"
+    outcome.posted = posted
+    logger.info(
+        "playlist regenerated",
+        extra={
+            "operation": "playlist_regenerate",
+            "outcome": "COMPLETE",
+            "playlist_id": playlist_id,
+        },
+    )
+    return outcome

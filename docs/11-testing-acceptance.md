@@ -74,7 +74,18 @@ Real write tests are never run by the ordinary CI command.
 - a missing playlist size is stored as NULL, not 0; Liked Music returns the local like count;
 - preview returns tracks with title, artists and familiarity, not only counters;
 - a repeated preview returns the same list, `regenerate` — a different one, and it becomes the new proposal;
-- publish writes the previewed list, not a freshly regenerated one;
+- publish writes the previewed list, not a freshly regenerated one — unless the previewed list contains a track disliked or vetoed since, which forces a fresh list;
+- `likeStatus` is parsed from playlist and history items only; watch/related/search/liked payloads never produce a rating;
+- a `DISLIKE` read from YouTube becomes a local dislike, `LIKE` a local like, `INDIFFERENT` clears only a dislike; a pending or recently changed local rating is never overwritten by a read;
+- the liked-songs sync does not overwrite a pending local rating;
+- a dislike blocks the same song under another `videoId` (same normalised title and primary artist);
+- the explicit regenerate reads the playlist and the other Tuner playlists, applies their dislikes, and the written list contains none of them;
+- a written track that the verification read shows as disliked is removed in the same action and reported as `removedAfterWrite`;
+- a list that contains an excluded track despite the generation is not written;
+- the explicit regenerate adds the new list before removing the previous items, never empties the playlist, and closes an open PARTIAL as `SUPERSEDED_BY_REGENERATE`;
+- the explicit regenerate is refused without a write when the playlist is not ACTIVE, another write is in progress, or either request budget has fewer than 6 requests left;
+- a gate failure, a failed add, a failed remove or a failed verification read is returned as a `200` outcome, and the ratings applied before it are kept; the playlist listing keeps reporting the failed outcome after a reload;
+- a PARTIAL whose plan contains a track disliked since is cancelled as `DESIRED_INVALIDATED` without a write;
 - an ACTIVE playlist is deleted upon explicit confirmation, any other status is rejected;
 - verification repeats the read until a just-created playlist becomes readable, and preserves the ID when attempts are exhausted;
 - verification is checked against the saved desired hash, so a repeated adopt passes while a playlist changed externally is still rejected;
@@ -174,6 +185,7 @@ The last step is destructive and is not part of the automatic default run. Manag
 | AT-10 | Safe publish | crash-safe create+verify with adaptive size; then only an ACTIVE managed playlist, gates, backup, convergent PARTIAL with item/request caps |
 | AT-11 | Restart during job | no duplicate writes, state is restored |
 | AT-12 | Official iPhone app | three private Tuner playlists are visible and playable in YouTube Music |
+| AT-13 | Dislike on the phone | a track disliked in YouTube Music inside a Tuner playlist is gone from that playlist after `Regenerate & update on YouTube`, never reappears in any Tuner playlist or wave, and the card says how many disliked tracks were removed |
 
 ## 8. Quality thresholds before MVP
 
@@ -181,7 +193,7 @@ The last step is destructive and is not part of the automatic default run. Manag
 - at least 90% branch coverage of domain/recommender overall;
 - zero high-severity dependency vulnerabilities or a documented exception;
 - zero secrets according to the secret scanner;
-- all AT-01…AT-12 passed and recorded with the date/app version;
+- all AT-01…AT-13 passed and recorded with the date/app version;
 - baseline and post-bootstrap metrics are computed on real sessions without manual substitution;
 - a 24-hour soak test does not create extra sync/publish calls.
 

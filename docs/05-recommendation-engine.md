@@ -82,7 +82,7 @@ The overall daily ceiling for discovery calls is 120 (docs/03 §9).
 
 Before the ML score the following are excluded:
 
-- explicit dislike or manual block;
+- explicit dislike or manual block — set in Tuner or read back from YouTube Music (docs/03 section 6) — and any other `videoId` of the same song (same normalised title and primary artist): YouTube may store a track under a canonical id, so a dislike of the stored id must also cover the id Tuner would write;
 - a track with a local veto ("Don't Like At All", see §11) and **all non-liked tracks of veto artists**;
 - a candidate with a high slop score (see "Slop filter" below);
 - an unavailable `videoId`;
@@ -338,11 +338,13 @@ A wave optimises freshness: novelty windows, memory of past waves and the rotati
 
 ### Preview is mandatory and it is real
 
-`POST /{kind}/plan` returns **the track list itself** — title, artists, the familiar/discovery label and reason codes — not just counters. The UI shows it, allows playing it from any position through the regular player, and offers `Regenerate`.
+`POST /{kind}/plan` returns **the track list itself** — title, artists, the familiar/discovery label and reason codes — not just counters. The UI shows it for a playlist that does not exist yet and allows playing it from any position through the regular player.
 
-The shown list is stored on the manifest (`proposed_desired_json`) together with the seed: a repeated request returns the same list, and `Publish` writes exactly it. Otherwise something the user had not seen would be published — whereas the line "never touched without a preview" promises exactly that this cannot happen.
+For an ACTIVE playlist the owner decided on 2026-10-15 (ADR-005) that a separate preview step made the screen unclear: nobody could tell which button changes the playlist on YouTube. There, regeneration and posting are one explicit, confirmed action — `Regenerate & update on YouTube` (docs/03 section 8) — and the posted list is shown right after it. The previous contents are kept in a backup.
 
-`Regenerate` replaces the proposal with a new one: the seed is random, and the selection inside `_compose` samples from twenty leaders instead of cutting off the top of the list. The overlap between variants is 60–80%, depending on how narrow the pool of tracks above the quality threshold is; the order changes completely. Full independence of the variants is unattainable and undesirable: a playlist must consist of the best, and there is only a finite amount of the best.
+The shown list is stored on the manifest (`proposed_desired_json`) together with the seed: a repeated request returns the same list, and the incremental `Publish` writes exactly it. A stored list that contains a track disliked or vetoed since is discarded and built anew — a remembered proposal must not carry a dislike back into a playlist. After an explicit regenerate the stored list is the one actually posted, in the order YouTube stored it.
+
+Every regeneration — the explicit regenerate and the `regenerate` flag of `/plan` — starts from the current local state: all likes, dislikes, vetoes, listens and skips recorded so far, plus the ratings just read from the playlist on YouTube in the explicit case. The seed is random, and the selection inside `_compose` samples from twenty leaders instead of cutting off the top of the list. The overlap between variants is 60–80%, depending on how narrow the pool of tracks above the quality threshold is; the order changes completely. Full independence of the variants is unattainable and undesirable: a playlist must consist of the best, and there is only a finite amount of the best.
 
 An ACTIVE playlist can also be deleted — it is the listener's playlist, and the marker check still guarantees that Tuner will not touch anything that is not its own. The previous prohibition meant that a playlist the listener did not like could not be removed from the application at all.
 
@@ -371,7 +373,7 @@ Auto-publication is allowed if:
 
 Publishing is not triggered merely by a timer in the absence of new data.
 
-The exception is an unfinished PARTIAL publication. The new 15 sessions or rating are needed only to create a new desired plan. PARTIAL is the continuation of an already accepted immutable plan and is placed by the scheduler into the next 24-hour window even without a new listening signal. Before each fragment, OAuth/circuit, ownership marker, fresh remote hash, hard filters, explicit dislikes/blocks and both call budgets are re-checked. If a new safety signal has invalidated the desired snapshot, the continuation is cancelled and the next new plan again requires the usual trigger.
+The exception is an unfinished PARTIAL publication. The new 15 sessions or rating are needed only to create a new desired plan. PARTIAL is the continuation of an already accepted immutable plan and may be continued in the next 24-hour window even without a new listening signal; it is continued by an explicit publish — no scheduler job does this. Before each fragment, OAuth/circuit, ownership marker, fresh remote hash, hard filters, explicit dislikes/blocks and both call budgets are re-checked. If a new safety signal has invalidated the desired snapshot, the continuation is cancelled and the next new plan again requires the usual trigger.
 
 ### Playlist quality gates
 
@@ -382,7 +384,7 @@ For each managed playlist the planner starts from `configured_target_size`, 60 b
 A desired playlist is admitted to initial create or incremental publish only if all of the following hold simultaneously:
 
 - exactly `effective_target_size` unique playable `videoId` values, where `25 <= effective_target_size <= configured_target_size`;
-- no explicit dislikes, blocks, playback-error cooldown or metadata-only items;
+- no explicit dislikes, blocks, vetoes, playback-error cooldown or metadata-only items — enforced twice: the generation excludes them, and right before any write the list is checked against the same exclusion set; a list that fails the check is not written;
 - the actual familiar/discovery share deviates from the target by no more than 10 percentage points;
 - the number of unique primary artists is at least `ceil(0.40 * effective_target_size)`, there are no more than three tracks of one primary artist and no adjacent tracks of the same artist;
 - no candidate has `quality_expected < -0.20`; the rule-mapped score and LinUCB exploitation are compared per the definition above, the exploration bonus cannot hide a negative quality score;

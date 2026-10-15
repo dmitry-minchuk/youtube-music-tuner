@@ -31,18 +31,6 @@ export interface PlanResponse {
   generatedAt?: string | null;
 }
 
-export interface PublicationResponse {
-  publicationId: string;
-  status: "PLANNED" | "WRITING" | "VERIFYING" | "COMPLETE" | "PARTIAL" | "FAILED";
-  desiredHash: string;
-  effectiveTargetSize: number;
-  remainingItemChanges: number;
-  remainingEstimatedRequests: number;
-  nextContinuationAfter: string | null;
-  errorCode: string | null;
-  gateVersion: string;
-}
-
 export function usePlanPlaylist() {
   return useMutation({
     mutationFn: ({ kind, regenerate = false }: { kind: Kind; regenerate?: boolean }) =>
@@ -72,12 +60,35 @@ export function useSetupPlaylists() {
   });
 }
 
-export function usePublishPlaylist() {
+export interface RegenerateResponse {
+  kind: Kind;
+  status: "COMPLETE" | "SKIPPED_QUALITY" | "FAILED";
+  errorCode: string | null;
+  reasonCode?: string;
+  ratingsApplied: number;
+  added: number;
+  removed: number;
+  removedDisliked: number;
+  removedAfterWrite: number;
+  publicationId: string | null;
+  tracks: PlanTrack[];
+  effectiveTargetSize?: number;
+  availableFamiliar?: number;
+  availableDiscovery?: number;
+  minimumPublishSize?: number;
+  gateFailures?: string[];
+}
+
+export function useRegeneratePlaylist() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (kind: Kind) =>
-      api.post<PublicationResponse>(`/api/v1/managed-playlists/${kind}/publish`),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ["playlists"] }),
+      api.post<RegenerateResponse>(`/api/v1/managed-playlists/${kind}/regenerate`),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["playlists"] });
+      void client.invalidateQueries({ queryKey: ["rating"] });
+      void client.invalidateQueries({ queryKey: ["library"] });
+    },
   });
 }
 

@@ -186,14 +186,15 @@ Explanation returns reason codes and numeric contributions, not a story generate
 | --- | --- | --- |
 | POST | `/api/v1/managed-playlists/setup` | create or reconcile the three Tuner playlists after a preview |
 | POST | `/api/v1/managed-playlists/{kind}/plan` | view the composition without external calls; `{"regenerate": true}` proposes a different variant |
-| POST | `/api/v1/managed-playlists/{kind}/publish` | enqueue an idempotent job |
+| POST | `/api/v1/managed-playlists/{kind}/publish` | apply one incremental window of the saved preview synchronously |
+| POST | `/api/v1/managed-playlists/{kind}/regenerate` | `Regenerate & update on YouTube`: read ratings from the playlist, build a new list from all behaviour, replace the contents, verify (docs/03 §8) |
 | POST | `/api/v1/managed-playlists/{kind}/reconcile` | check/adopt a CREATING, UNVERIFIED or CLEANUP_REQUIRED exact marker; for DELETED — `400` |
 | DELETE | `/api/v1/managed-playlists/{kind}/setup-artifact` | after confirmation, delete your own playlist in any status, only an exact remote ID with a matching marker |
 | GET | `/api/v1/publications/{id}` | state and verification |
 | GET | `/api/v1/managed-playlists/{kind}/backups` | available snapshots |
 | POST | `/api/v1/managed-playlists/{kind}/restore` | plan a manual restore |
 
-Publish writes the preview saved on the manifest (a request without a body); protection against remote changes is performed on the server by comparing the remote hash with the last verified intermediate state (docs/03 §8, step 3) — a mismatch yields `409 REMOTE_CHANGED` without a write. `GET /api/v1/playlists` does not return manifests in DELETED status and includes `setupErrorCode` for unfinished setups.
+Publish writes the preview saved on the manifest (a request without a body), unless that preview contains a track disliked or vetoed since — then a fresh list is built; protection against remote changes is performed on the server by comparing the remote hash with the last verified intermediate state (docs/03 §8, step 3) — a mismatch yields `409 REMOTE_CHANGED` without a write. `GET /api/v1/playlists` does not return manifests in DELETED status and includes `setupErrorCode` for unfinished setups.
 
 `POST .../plan` returns **the list itself**, not only counters: a `tracks` array with `videoId`, `title`, `artists`, `familiarity` and `reasonCodes`, plus `randomSeed` and `generatedAt`. The list that was shown is saved on the manifest, so a repeated call returns the same one, and `publish` writes exactly that — otherwise something the user had not seen would be published. The body `{"regenerate": true}` replaces the proposal with a new candidate with a different seed.
 
@@ -215,6 +216,25 @@ The initial setup request also contains the accepted desired hash and the `playl
 ```
 
 An incremental response may have `PARTIAL` and returns `remainingItemChanges`, `remainingEstimatedRequests`, `nextContinuationAfter` and the same `desiredHash`. Continuation is performed after 24 hours without requiring 15 new sessions, but only after repeated safety/ownership/hash/budget checks.
+
+`POST .../regenerate` takes no body and is called only for an ACTIVE playlist after a confirming second click. Refusals before any write: `409 PLAYLIST_UNVERIFIED` (not ACTIVE), `403 PLAYLIST_NOT_MANAGED` (the ownership marker of the fresh read does not match), a mapped integration error when the fresh read itself fails or a read is refused for authentication/rate limiting (`401`/`429`/`503`), `409 JOB_ALREADY_RUNNING` (another write of this playlist started less than 10 minutes ago), `429 LOCAL_BUDGET_EXCEEDED` (fewer than 6 requests left in the playlist's rolling 24-hour budget, or the global daily one cannot also cover one read per other ACTIVE Tuner playlist), `503 CIRCUIT_OPEN`. Everything after the fresh read returns `200` with the outcome, so the ratings already learned and the ledger rows are never rolled back:
+
+```json
+{
+  "kind": "FAMILIAR",
+  "status": "COMPLETE",
+  "publicationId": "...",
+  "errorCode": null,
+  "ratingsApplied": 6,
+  "added": 41,
+  "removed": 41,
+  "removedDisliked": 6,
+  "removedAfterWrite": 0,
+  "tracks": [{"videoId": "...", "title": "...", "artists": ["..."], "familiarity": "FAMILIAR", "reasonCodes": ["LIKED_TRACK"]}]
+}
+```
+
+`status` is `COMPLETE`, `SKIPPED_QUALITY` (nothing written; gate fields as in `/plan`) or `FAILED` with `errorCode` (`ADD_FAILED`, `ADD_OUTCOME_UNKNOWN`, `REMOVE_FAILED_AFTER_ADD`, `VERIFY_READ_FAILED`, `VERIFICATION_MISMATCH`, `CLEANUP_FAILED`). `ratingsApplied` counts the ratings learned from all Tuner playlists read; `removedAfterWrite` counts written tracks the verification read showed as disliked and that were taken out again. `tracks` is the posted list in the order YouTube stored it. `GET /api/v1/playlists` returns `lastWriteStatus` and `lastWriteErrorCode` of each Tuner playlist's latest write, so a failed outcome is still explained after a reload.
 
 `DELETE .../setup-artifact` is called after explicit confirmation in the UI (a request without a body; the kind in the path unambiguously determines the manifest, and the ID/marker are taken from it). The backend calls `delete_managed_playlist`, records the fresh-read/delete in the call ledger and returns `{"kind":"...","status":"DELETED"}` on confirmed success or when the remote ID is absent (a local intent). A marker mismatch yields `403 PLAYLIST_NOT_MANAGED`; an ambiguous external response keeps CLEANUP_REQUIRED and returns a retryable integration error without an automatic retry. `POST .../setup` is idempotent: ACTIVE kinds are returned with `alreadyExisting: true` without an external call.
 

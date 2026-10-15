@@ -250,11 +250,41 @@ def skip_quarantine(db: Session, now: dt.datetime, protected: set[str] | None = 
     return quarantined
 
 
-def _blocked(db: Session) -> set[str]:
-    rows = db.scalars(
-        select(LibraryTrackState.video_id).where(LibraryTrackState.is_disliked.is_(True))
+def _song_key(title: str) -> str:
+    return " ".join(title.casefold().split())
+
+
+def _same_songs(db: Session, video_ids: set[str]) -> set[str]:
+    if not video_ids:
+        return set()
+    seeds = db.execute(
+        select(Track.title, TrackArtist.artist_id)
+        .join(TrackArtist, TrackArtist.track_id == Track.video_id)
+        .where(Track.video_id.in_(video_ids), TrackArtist.ordinal == 0)
     ).all()
-    return set(rows)
+    keys = {(_song_key(title), artist_id) for title, artist_id in seeds}
+    if not keys:
+        return set()
+    rows = db.execute(
+        select(Track.video_id, Track.title, TrackArtist.artist_id)
+        .join(TrackArtist, TrackArtist.track_id == Track.video_id)
+        .where(
+            TrackArtist.ordinal == 0,
+            TrackArtist.artist_id.in_({artist_id for _, artist_id in keys}),
+        )
+    ).all()
+    return {
+        video_id for video_id, title, artist_id in rows if (_song_key(title), artist_id) in keys
+    }
+
+
+def _blocked(db: Session) -> set[str]:
+    disliked = set(
+        db.scalars(
+            select(LibraryTrackState.video_id).where(LibraryTrackState.is_disliked.is_(True))
+        ).all()
+    )
+    return disliked | _same_songs(db, disliked)
 
 
 def _liked(db: Session) -> set[str]:
@@ -319,6 +349,23 @@ def _vetoes(db: Session) -> tuple[set[str], set[str]]:
         if artist:
             artists.add(artist)
     return vetoed, artists
+
+
+def _vetoed_artist_tracks(db: Session, vetoed_artists: set[str]) -> set[str]:
+    if not vetoed_artists:
+        return set()
+    return set(
+        db.scalars(
+            select(TrackArtist.track_id).where(
+                TrackArtist.artist_id.in_(vetoed_artists), TrackArtist.ordinal == 0
+            )
+        ).all()
+    )
+
+
+def publishing_exclusions(db: Session) -> set[str]:
+    vetoed, vetoed_artists = _vetoes(db)
+    return _blocked(db) | vetoed | (_vetoed_artist_tracks(db, vetoed_artists) - _liked(db))
 
 
 def _veto_neighbors(db: Session, vetoed: set[str]) -> set[str]:
@@ -568,14 +615,7 @@ def generate_wave(db: Session, request: WaveRequest) -> WaveResult:
         # was not enough: with a thin discovery pool the penalised tracks
         # still surfaced, and mass-generated farms need "never again"
         # (docs/05 s.11). Only an explicit like survives the artist veto.
-        vetoed_artist_tracks = set(
-            db.scalars(
-                select(TrackArtist.track_id).where(
-                    TrackArtist.artist_id.in_(vetoed_artists), TrackArtist.ordinal == 0
-                )
-            ).all()
-        )
-        pool_ids -= vetoed_artist_tracks - liked
+        pool_ids -= _vetoed_artist_tracks(db, vetoed_artists) - liked
 
     playable = {
         row.video_id: row

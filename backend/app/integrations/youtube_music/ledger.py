@@ -42,6 +42,7 @@ GLOBAL_PLAYLIST_REQUESTS_PER_DAY = MAX_PLAYLIST_REQUESTS_PER_WINDOW * MANAGED_PL
 # One create plus up to three verification reads: a just-created playlist is
 # not readable immediately (docs/03 section 8).
 INITIAL_SETUP_REQUESTS_PER_PLAYLIST = 4
+REGENERATE_REQUESTS = 6
 
 # Backoff ladder before the circuit opens.
 BACKOFF_SECONDS = (60, 300, 1800)
@@ -126,8 +127,6 @@ class SqlCallRecorder:
 
 
 class CallBudget:
-    """Reads the ledger to answer "may this automatic call happen now?"."""
-
     def __init__(self, session: Session, now: dt.datetime | None = None) -> None:
         self._session = session
         self._now = now or utcnow()
@@ -211,17 +210,17 @@ class CallBudget:
         used = self.playlist_requests_in_window(playlist_id, window_start)
         return max(0, MAX_PLAYLIST_REQUESTS_PER_WINDOW - used)
 
-    # -- circuit breaker --------------------------------------------------
+    def check_regenerate(self, playlist_id: str, *, sibling_reads: int = 0) -> None:
+        used = self.playlist_requests_in_window(playlist_id, self._day_ago)
+        if used + REGENERATE_REQUESTS > MAX_PLAYLIST_REQUESTS_PER_WINDOW:
+            raise BudgetExceeded("playlist_requests", MAX_PLAYLIST_REQUESTS_PER_WINDOW, used)
+        global_used = self.global_playlist_requests_today()
+        if global_used + REGENERATE_REQUESTS + sibling_reads > GLOBAL_PLAYLIST_REQUESTS_PER_DAY:
+            raise BudgetExceeded(
+                "global_playlist_requests", GLOBAL_PLAYLIST_REQUESTS_PER_DAY, global_used
+            )
 
     def circuit_state(self) -> CircuitState:
-        """Open the circuit after the backoff ladder is exhausted.
-
-        Auth and rate-limit failures count immediately; other transient
-        failures need to fill the ladder first.
-        """
-        # Order by insertion, not by started_at: started_at is derived by
-        # subtracting the duration, so a fast success recorded after a slow
-        # failure would otherwise sort before it and never close the circuit.
         recent = self._session.scalars(
             select(ApiCallLedger)
             .where(ApiCallLedger.started_at >= self._now - dt.timedelta(hours=1))
